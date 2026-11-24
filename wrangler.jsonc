@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fidus-staging",
+  "main": "src/cf/fidus.ts",
+  "compatibility_date": "2026-11-24",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fidus-staging-db",
+      "database_id": "19d312d4-f467-4908-877d-a6fb2dc10ab2"
+    }
+  ],
+  "vars": {
+    "NODE_ENV": "production"
+  },
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "directory": "dist"
+  },
+  "env": {
+    "production": {
+      "name": "fidus-production",
+      "workers_dev": false
+    }
+  }
+}
