@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { PatientChatBot } from '../components/common/PatientChatBot';
 import {
   Activity, ArrowRight, Baby, BedDouble, BookHeart, BriefcaseMedical, Building2, CalendarCheck,
   CalendarClock, ClipboardCheck, ClipboardList, Droplet, FlaskConical, HeartHandshake, HeartPulse,
@@ -235,6 +236,8 @@ export const LandingPage = ({ onNavigateLogin, onNavigateRegister }) => {
           </div>
         </section>
       </main>
+
+      <PatientChatBot onBookAppointment={goRegister} />
 
       <footer className="cp-footer">
         <div className="cp-container cp-footer-inner">

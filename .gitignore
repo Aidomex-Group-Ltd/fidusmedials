@@ -25,3 +25,6 @@ dist-ssr
 
 .vercel
 .env*
+
+# Wrangler local state (Miniflare simulation DBs; not for version control)
+.wrangler/state/

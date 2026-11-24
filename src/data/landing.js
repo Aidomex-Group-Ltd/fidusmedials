@@ -96,6 +96,8 @@ export const OUTREACH_SERVICES = [
   { icon: 'Megaphone', title: 'Preventive Healthcare Campaigns', text: 'Community and institutional campaigns promoting preventive care.' },
 ];
 
+export const LANDING_SERVICES = [...FEATURED_SERVICES];
+
 export const SCREENING_SERVICES = [
   { icon: 'Activity', title: 'General Health Assessments', text: 'Baseline wellness checks to understand your health status.' },
   { icon: 'HeartPulse', title: 'Blood Pressure Screening', text: 'Quick checks to monitor and manage cardiovascular risk.' },

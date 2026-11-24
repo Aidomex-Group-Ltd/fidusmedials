@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useToast } from '../context/ToastContext';
+import { authService } from '../services/api';
 import { ArrowLeft, ArrowRight, Mail } from 'lucide-react';
 
 export const StaffForgotPassword = ({ onNavigateHome }) => {
@@ -10,19 +11,13 @@ export const StaffForgotPassword = ({ onNavigateHome }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email) {
-      return toast.warning('Please enter your staff email address.');
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return toast.warning('Please enter a valid email address.');
-    }
-
+    if (!email) return toast.warning('Please enter your staff email address.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast.warning('Please enter a valid email address.');
     try {
       setSubmitting(true);
-      // The backend does not yet expose a public staff forgot-password endpoint;
-      // when /api/staff/forgot-password is implemented, call it here.
+      const res = await authService.forgotPassword(email.trim().toLowerCase());
       setSent(true);
-      toast.success('If a staff account matches that email, we have sent recovery instructions.');
+      toast.success(res?.message || 'If a staff account matches that email, reset instructions have been sent.');
     } catch (err) {
       toast.error(err.message || 'Reset request failed');
     } finally {

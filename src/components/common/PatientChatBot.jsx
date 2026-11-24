@@ -9,11 +9,8 @@ import {
   Stethoscope,
   X,
 } from 'lucide-react';
-import {
-  LANDING_BRAND,
-  LANDING_CONTACT,
-  LANDING_SERVICES,
-} from '../../data/landing';
+import { LANDING_BRAND, LANDING_CONTACT, LANDING_SERVICES } from '../../data/landing';
+import { chatbotService } from '../../services/api';
 
 const WELCOME =
   'Hello! Welcome to Fidus Medical Center. How can we help you today?';
@@ -123,17 +120,21 @@ export const PatientChatBot = ({ onBookAppointment }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen]);
 
-  const sendMessage = (text) => {
+  const sendMessage = async (text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-
-    const reply = getAssistantReply(trimmed);
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text: trimmed },
-      { role: 'assistant', text: reply.text, action: reply.action, tone: reply.tone },
-    ]);
+    const userMsg = { role: 'user', text: trimmed };
+    setMessages((prev) => [...prev, userMsg]);
     setInput('');
+    try {
+      const res = await chatbotService.sendMessage({ message: trimmed, history: messages.slice(-8) });
+      const reply = res?.reply || res?.data?.reply || getAssistantReply(trimmed).text;
+      const local = getAssistantReply(trimmed);
+      setMessages((prev) => [...prev, { role: 'assistant', text: reply, action: local.action, tone: local.tone }]);
+    } catch {
+      const local = getAssistantReply(trimmed);
+      setMessages((prev) => [...prev, { role: 'assistant', text: local.text, action: local.action, tone: local.tone }]);
+    }
   };
 
   const handleQuickAction = (id) => {

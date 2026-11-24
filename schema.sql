@@ -13,9 +13,25 @@ CREATE TABLE IF NOT EXISTS users (
   blood_group TEXT,
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL,
+  email_verified_at TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  failed_login_count INTEGER NOT NULL DEFAULT 0,
+  locked_until TEXT,
+  last_login_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auth_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  type TEXT NOT NULL, -- email_verification | password_reset
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  meta TEXT
 );
 
 CREATE TABLE IF NOT EXISTS staff_invitations (
@@ -62,7 +78,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_invitations_token ON staff_invitations(token);
 CREATE INDEX IF NOT EXISTS idx_invitations_email ON staff_invitations(email);
 CREATE INDEX IF NOT EXISTS idx_applications_email ON staff_applications(email);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_type ON auth_tokens(user_id, type);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);

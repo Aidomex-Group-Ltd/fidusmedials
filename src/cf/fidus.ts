@@ -8,6 +8,7 @@ type Env = { DB: any; JWT_SECRET: string; SESSION_SECRET: string };
 
 // Auth module is bundled by Vite into the worker environment.
 import * as auth from './auth';
+import * as emailSvc from './email';
 
 const ALLOWED_METHODS: Record<string, string[]> = {
   '/api/health': ['GET', 'OPTIONS'],
@@ -15,6 +16,10 @@ const ALLOWED_METHODS: Record<string, string[]> = {
   '/api/auth/login': ['POST', 'OPTIONS'],
   '/api/auth/logout': ['POST', 'OPTIONS'],
   '/api/auth/me': ['GET', 'OPTIONS'],
+  '/api/auth/verify-email': ['POST', 'GET', 'OPTIONS'],
+  '/api/auth/resend-verification': ['POST', 'OPTIONS'],
+  '/api/auth/forgot-password': ['POST', 'OPTIONS'],
+  '/api/auth/reset-password': ['POST', 'OPTIONS'],
   '/api/staff/invite': ['POST', 'OPTIONS'],
   '/api/staff/apply': ['POST', 'OPTIONS'],
   '/api/staff/applications': ['GET', 'OPTIONS'],
@@ -24,6 +29,8 @@ const ALLOWED_METHODS: Record<string, string[]> = {
   '/api/staff/login': ['POST', 'OPTIONS'],
   '/api/staff/me': ['GET', 'OPTIONS'],
   '/api/users': ['GET', 'OPTIONS'],
+  '/api/email/test': ['POST', 'OPTIONS'],
+  '/api/chatbot/query': ['POST', 'OPTIONS'],
 };
 
 function json(body: any, status = 200, headers?: HeadersInit): Response {
@@ -137,6 +144,31 @@ async function handleApi(ctx: ExecutionContext, req: Request, pathname: string, 
       return json(res.json, res.status);
     }
 
+    case '/api/auth/verify-email': {
+      const body = method === 'POST' ? await readBodyJson(req) : {};
+      const token = body?.token || new URL(req.url).searchParams.get('token') || '';
+      const res = await auth.verifyEmail(ctx, String(token), ip);
+      return json(res.json, res.status);
+    }
+
+    case '/api/auth/resend-verification': {
+      const body = await readBodyJson(req);
+      const res = await auth.resendVerification(ctx, body, ip);
+      return json(res.json, res.status);
+    }
+
+    case '/api/auth/forgot-password': {
+      const body = await readBodyJson(req);
+      const res = await auth.forgotPassword(ctx, body, ip);
+      return json(res.json, res.status);
+    }
+
+    case '/api/auth/reset-password': {
+      const body = await readBodyJson(req);
+      const res = await auth.resetPassword(ctx, body, ip);
+      return json(res.json, res.status);
+    }
+
     case '/api/staff/invite': {
       const token = bearerToken(req);
       const a = await auth.requireRole(ctx, token, ['Administrator'], ip);
@@ -201,6 +233,24 @@ async function handleApi(ctx: ExecutionContext, req: Request, pathname: string, 
       const a = await auth.requireRole(ctx, token, ['Administrator'], ip);
       if (!a.ok) return json(a.json, a.status);
       const res = await auth.listUsers(ctx, a.user, ip);
+      return json(res.json, res.status);
+    }
+
+    case '/api/email/test': {
+      const token = bearerToken(req);
+      const a = await auth.requireRole(ctx, token, ['Administrator'], ip);
+      if (!a.ok) return json(a.json, a.status);
+      const body = await readBodyJson(req);
+      const to = String(body?.to || '').trim();
+      if (!to) return json({ success: false, message: 'Recipient email is required' }, 400);
+      const tpl = emailSvc.supportNotificationEmail((globalThis as any).__FIDUS_ENV__, 'Administrator', 'This is a Fidus staging Resend test email.');
+      const result = await emailSvc.sendEmail((globalThis as any).__FIDUS_ENV__, { to, subject: body?.subject || tpl.subject, html: tpl.html, text: tpl.text });
+      return json({ success: result.ok, data: result, message: result.ok ? 'Test email sent' : (result.error || 'Email failed') }, result.ok ? 200 : 500);
+    }
+
+    case '/api/chatbot/query': {
+      const body = await readBodyJson(req);
+      const res = await auth.chatbotQuery(ctx, body, ip);
       return json(res.json, res.status);
     }
 

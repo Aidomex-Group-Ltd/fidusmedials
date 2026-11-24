@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useToast } from '../context/ToastContext';
+import { authService } from '../services/api';
 import { ArrowLeft, ArrowRight, Mail, Phone } from 'lucide-react';
 
 export const PatientForgotPassword = ({ onNavigateLogin, onNavigateHome }) => {
@@ -10,28 +11,15 @@ export const PatientForgotPassword = ({ onNavigateLogin, onNavigateHome }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!identifier) {
-      return toast.warning('Please enter your email or phone number.');
-    }
-
+    if (!identifier) return toast.warning('Please enter your email or phone number.');
+    const isEmail = identifier.includes('@');
+    if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return toast.warning('Please enter a valid email address.');
+    if (!isEmail) return toast.warning('Password reset links are sent by email. Please enter the email address on your account, or contact support for phone-based assistance.');
     try {
       setSubmitting(true);
-      // The backend does not yet expose a public forgot-password endpoint;
-      // for now we validate the identifier locally and show a recovery message.
-      // When /api/auth/forgot-password is implemented, call it here.
-      const ok = identifier.includes('@')
-        ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)
-        : identifier.replace(/[\s\-()+]/g, '').length >= 9;
-
-      if (!ok) {
-        toast.warning('Please enter a valid email address or phone number.');
-        return;
-      }
-
-      // Placeholder: in production this would call the recovery endpoint and
-      // send a time-limited reset link or SMS OTP to the verified contact.
+      const res = await authService.forgotPassword(identifier.trim().toLowerCase());
       setSent(true);
-      toast.success('If an account matches that contact, we have sent recovery instructions.');
+      toast.success(res?.message || 'If an account matches that email, reset instructions have been sent.');
     } catch (err) {
       toast.error(err.message || 'Reset request failed');
     } finally {

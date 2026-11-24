@@ -24,6 +24,8 @@ import { ClientApp } from './v3/app';
 import { PatientLogin } from './pages/PatientLogin';
 
 import { PatientForgotPassword } from './pages/PatientForgotPassword';
+import { PatientResetPassword } from './pages/PatientResetPassword';
+import { PatientVerifyEmail } from './pages/PatientVerifyEmail';
 import { StaffLogin } from './pages/StaffLogin';
 
 import { StaffApply } from './pages/StaffApply';
@@ -179,6 +181,12 @@ const MainLayout = () => {
         }
         if (path === '/patient/forgot-password') {
           return <PatientForgotPassword onNavigateLogin={() => navigate('/login')} onNavigateHome={() => navigate('/')} />;
+        }
+        if (path === '/patient/reset-password') {
+          return <PatientResetPassword onNavigateLogin={() => navigate('/login')} onNavigateHome={() => navigate('/')} />;
+        }
+        if (path === '/verify-email') {
+          return <PatientVerifyEmail onNavigateLogin={() => navigate('/login')} onNavigateHome={() => navigate('/')} />;
         }
         // Staff auth routes.
         if (path === '/staff/login') {

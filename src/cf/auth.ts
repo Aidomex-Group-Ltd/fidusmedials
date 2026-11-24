@@ -5,12 +5,119 @@
 // The Worker's env (including the DB binding) is stashed on globalThis by the
 // fetch handler at request time. Read it from there so the auth module does not
 // depend on the caller passing env separately.
+import * as emailSvc from './email';
+
 export const getEnv = (): any => (globalThis as any).__FIDUS_ENV__;
 
 const DB = (): any => {
   const env = getEnv();
   return env?.DB;
 };
+
+const EMAIL_VERIFY_TTL_SECONDS = 24 * 60 * 60;
+const PASSWORD_RESET_TTL_SECONDS = 60 * 60;
+const LOGIN_MAX_FAILURES = 8;
+const LOGIN_LOCK_MINUTES = 15;
+
+function appBaseUrl(): string {
+  const env = getEnv() || {};
+  return String(env.FRONTEND_URL || env.APP_URL || 'https://fidusmedicals.space').replace(/\/+$/, '');
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return hexFromBytes(new Uint8Array(bytes));
+}
+
+function randomToken(bytes = 32): string {
+  return base64url(crypto.getRandomValues(new Uint8Array(bytes)));
+}
+
+async function createAuthToken(userId: string, type: 'email_verification' | 'password_reset', ttlSeconds: number, meta?: any) {
+  const db = DB();
+  const token = randomToken(32);
+  const tokenHash = await sha256Hex(token);
+  const id = genId();
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+  await db.prepare(`DELETE FROM auth_tokens WHERE user_id = ? AND type = ? AND used_at IS NULL`).bind(userId, type).run();
+  await db.prepare(
+    `INSERT INTO auth_tokens (id, user_id, type, token_hash, expires_at, created_at, meta)
+     VALUES (?, ?, ?, ?, ?, datetime('now'), ?)`
+  ).bind(id, userId, type, tokenHash, expiresAt, meta ? JSON.stringify(meta) : null).run();
+  return { token, expiresAt };
+}
+
+async function consumeAuthToken(type: 'email_verification' | 'password_reset', token: string) {
+  const db = DB();
+  const tokenHash = await sha256Hex(token);
+  const row = await db.prepare(
+    `SELECT id, user_id, type, expires_at, used_at, meta FROM auth_tokens WHERE token_hash = ? AND type = ?`
+  ).bind(tokenHash, type).first() as any;
+  if (!row) return { ok: false, reason: 'invalid' as const };
+  if (row.used_at) return { ok: false, reason: 'used' as const };
+  if (new Date(row.expires_at).getTime() < Date.now()) return { ok: false, reason: 'expired' as const };
+  await db.prepare(`UPDATE auth_tokens SET used_at = datetime('now') WHERE id = ?`).bind(row.id).run();
+  return { ok: true, row } as const;
+}
+
+function publicUserFromRow(row: any): any {
+  const u = toPublicUser(row);
+  return { ...u, email_verified: !!row.email_verified_at, status: row.status || 'active' };
+}
+
+async function sendVerificationEmailForUser(user: any) {
+  const env = getEnv() || {};
+  if (!user?.email || String(user.email).includes('@noreply.fidus.staging')) {
+    return { ok: false, skipped: true, error: 'No deliverable email address' };
+  }
+  const { token } = await createAuthToken(user.id, 'email_verification', EMAIL_VERIFY_TTL_SECONDS, { email: user.email });
+  const verifyUrl = `${appBaseUrl()}/verify-email?token=${encodeURIComponent(token)}`;
+  const tpl = emailSvc.emailVerificationEmail(env, user.name, verifyUrl, '24 hours');
+  return emailSvc.sendEmail(env, { to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text, tags: [{ name: 'type', value: 'email-verification' }] });
+}
+
+async function sendPasswordResetEmailForUser(user: any) {
+  const env = getEnv() || {};
+  if (!user?.email || String(user.email).includes('@noreply.fidus.staging')) {
+    return { ok: false, skipped: true, error: 'No deliverable email address' };
+  }
+  const { token } = await createAuthToken(user.id, 'password_reset', PASSWORD_RESET_TTL_SECONDS, { email: user.email });
+  const resetUrl = `${appBaseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
+  const tpl = emailSvc.passwordResetEmail(env, user.name, resetUrl, '1 hour');
+  return emailSvc.sendEmail(env, { to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text, tags: [{ name: 'type', value: 'password-reset' }] });
+}
+
+function isAccountLocked(row: any): boolean {
+  return !!(row?.locked_until && new Date(row.locked_until).getTime() > Date.now());
+}
+
+async function recordFailedLogin(row: any) {
+  const db = DB();
+  const failures = Number(row.failed_login_count || 0) + 1;
+  const lock = failures >= LOGIN_MAX_FAILURES;
+  const lockedUntil = lock ? new Date(Date.now() + LOGIN_LOCK_MINUTES * 60 * 1000).toISOString() : null;
+  await db.prepare(`UPDATE users SET failed_login_count = ?, locked_until = ?, updated_at = datetime('now') WHERE id = ?`).bind(failures, lockedUntil, row.id).run();
+  return { failures, locked: lock, lockedUntil };
+}
+
+async function clearFailedLogin(userId: string) {
+  const db = DB();
+  await db.prepare(`UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).bind(userId).run();
+}
+
+const inMemoryRate = new Map<string, { count: number; resetAt: number }>();
+function rateLimit(key: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  const cur = inMemoryRate.get(key);
+  if (!cur || cur.resetAt <= now) {
+    inMemoryRate.set(key, { count: 1, resetAt: now + windowMs });
+    return { ok: true, remaining: limit - 1 };
+  }
+  if (cur.count >= limit) return { ok: false, remaining: 0, retryAfterMs: cur.resetAt - now };
+  cur.count += 1;
+  return { ok: true, remaining: limit - cur.count };
+}
+
 
 function jwtSecretHex(): string {
   // The fetch handler stashes secrets on globalThis.__FIDUS_SECRETS at request time.
@@ -313,20 +420,29 @@ export async function registerPatient(ctx: ExecutionContext, body: any, ip?: str
     const id = genId();
 
     await db.prepare(
-      `INSERT INTO users (id, name, email, phone, role, department, password_hash, password_salt, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'Patient', 'General', ?, ?, datetime('now'), datetime('now'))`
-    ).bind(id, name, storeEmail, phone || null, hash, salt).run();
+      `INSERT INTO users (id, name, email, phone, role, department, date_of_birth, sex, blood_group, password_hash, password_salt, email_verified_at, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Patient', 'General', ?, ?, ?, ?, ?, NULL, 'active', datetime('now'), datetime('now'))`
+    ).bind(id, name, storeEmail, phone || null, dateOfBirth, sex, bloodGroup, hash, salt).run();
 
     await audit(ctx, 'patient_registered', { id, email: storeEmail, role: 'Patient' }, id, 'user', { name, phone: phone || null }, ip);
 
+    const user = await db.prepare('SELECT id, name, email, phone, role, department, date_of_birth, sex, blood_group, email_verified_at, status, created_at, updated_at FROM users WHERE id = ?').bind(id).first() as any;
+    let emailDelivery: any = { ok: false, skipped: true };
+    if (email) {
+      emailDelivery = await sendVerificationEmailForUser(user);
+      const env = getEnv() || {};
+      const welcome = emailSvc.patientWelcomeEmail(env, name);
+      await emailSvc.sendEmail(env, { to: email, subject: welcome.subject, html: welcome.html, text: welcome.text, tags: [{ name: 'type', value: 'patient-welcome' }] });
+    }
+
     const token = await signJwt({ sub: id, email: storeEmail, role: 'Patient', aud: 'fidus-staging' }, jwtSecretHex());
-    const user = await db.prepare('SELECT id, name, email, phone, role, department, created_at, updated_at FROM users WHERE id = ?').bind(id).first() as any;
     return {
       status: 201,
       json: {
         success: true,
-        data: { ...toPublicUser(user), token, date_of_birth: dateOfBirth, sex, blood_group: bloodGroup },
-        message: 'Account created successfully',
+        data: { ...publicUserFromRow(user), token },
+        message: email ? 'Account created. Please verify your email address.' : 'Account created successfully.',
+        email_delivery: emailDelivery,
       },
     };
   } catch (err: any) {
@@ -373,37 +489,48 @@ async function verifyCredentials(identifier: string, password: string): Promise<
 // Login (patient portal — only patient accounts)
 // ---------------------------------------------------------------------------
 export async function login(ctx: ExecutionContext, body: any, ip?: string) {
-  // Patient portal login accepts an email or a Ugandan phone number as the
-  // identifier. The backend matches it against the email or phone column.
   const identifier = (body.email || body.phone || '').trim();
   const password = body.password || '';
   if (!identifier || !password) {
     return { status: 400, json: { success: false, message: 'Email or phone and password are required' } };
   }
+  const rl = rateLimit(`login:${ip || 'unknown'}:${identifier.toLowerCase()}`, 20, 15 * 60 * 1000);
+  if (!rl.ok) return { status: 429, json: { success: false, message: 'Too many login attempts. Please try again later.' } };
+
   const row = await verifyCredentials(identifier, password);
   if (!row) {
+    // best-effort failed count when account exists
+    const db = DB();
+    let existing: any = null;
+    if (looksLikePhone(identifier)) {
+      const phone = normalizeUgandanPhone(identifier);
+      if (phone) existing = await db.prepare('SELECT id, failed_login_count, locked_until FROM users WHERE phone = ? AND deleted_at IS NULL').bind(phone).first();
+    } else {
+      existing = await db.prepare('SELECT id, failed_login_count, locked_until FROM users WHERE email = ? AND deleted_at IS NULL').bind(identifier.toLowerCase()).first();
+    }
+    if (existing) await recordFailedLogin(existing);
     return { status: 401, json: { success: false, message: 'Invalid email or phone, or password' } };
   }
-
-  // Patient portal login: only patient accounts may sign in here.
-  // Staff accounts are redirected to the staff portal.
+  if (isAccountLocked(row)) return { status: 423, json: { success: false, message: 'Account temporarily locked due to failed sign-in attempts. Try again later or reset your password.' } };
   if (row.role !== 'Patient') {
     return { status: 401, json: { success: false, message: 'Please use Staff Login to access staff systems' } };
   }
+  if ((row as any).status && (row as any).status !== 'active') {
+    return { status: 403, json: { success: false, message: 'Account is not active. Please verify your email or contact support.' } };
+  }
 
+  await clearFailedLogin(row.id);
   const actor = { id: row.id, email: row.email, role: row.role };
   await audit(ctx, 'user_login', actor, row.id, 'user', { role: row.role }, ip);
 
   const token = await signJwt({ sub: row.id, email: row.email, role: row.role, aud: 'fidus-staging' }, jwtSecretHex());
+  const fresh = await DB().prepare('SELECT id, name, email, phone, role, department, date_of_birth, sex, blood_group, email_verified_at, status, created_at, updated_at, deleted_at FROM users WHERE id = ?').bind(row.id).first() as any;
   return {
     status: 200,
     json: {
       success: true,
-      data: {
-        ...toPublicUser(row),
-        token,
-      },
-      message: 'Signed in successfully',
+      data: { ...publicUserFromRow(fresh || row), token },
+      message: fresh?.email_verified_at ? 'Signed in successfully' : 'Signed in. Please verify your email address to fully secure your account.',
     },
   };
 }
@@ -419,15 +546,12 @@ export async function getMe(ctx: ExecutionContext, token: string | null, ip?: st
   const db = DB();
   if (!db) return { status: 500, json: { success: false, message: 'Database unavailable' } };
   const row = (await db.prepare(
-    `SELECT id, name, email, phone, role, department, created_at, updated_at, deleted_at FROM users WHERE id = ?`
-  ).bind(decoded.sub).first()) as UserRow | undefined;
+    `SELECT id, name, email, phone, role, department, date_of_birth, sex, blood_group, email_verified_at, status, created_at, updated_at, deleted_at FROM users WHERE id = ?`
+  ).bind(decoded.sub).first()) as any;
   if (!row || row.deleted_at) {
     return { status: 401, json: { success: false, message: 'User not found or deactivated' } };
   }
-  return {
-    status: 200,
-    json: { success: true, data: toPublicUser(row) },
-  };
+  return { status: 200, json: { success: true, data: publicUserFromRow(row) } };
 }
 
 // ---------------------------------------------------------------------------
@@ -775,36 +899,40 @@ function emailLower(v: any): string | null {
 // Staff login (only staff accounts)
 // ---------------------------------------------------------------------------
 export async function staffLogin(ctx: ExecutionContext, body: any, ip?: string) {
-  // Staff login accepts an email as the identifier (staff accounts always have
-  // an email). Phone-based lookup is available for patients; staff use email.
   const identifier = (body.email || '').trim().toLowerCase();
   const password = body.password || '';
   if (!identifier || !password) {
     return { status: 400, json: { success: false, message: 'Email and password are required' } };
   }
+  const rl = rateLimit(`staff-login:${ip || 'unknown'}:${identifier}`, 20, 15 * 60 * 1000);
+  if (!rl.ok) return { status: 429, json: { success: false, message: 'Too many login attempts. Please try again later.' } };
+
   const row = await verifyCredentials(identifier, password);
   if (!row) {
+    const db = DB();
+    const existing = await db.prepare('SELECT id, failed_login_count, locked_until FROM users WHERE email = ? AND deleted_at IS NULL').bind(identifier).first() as any;
+    if (existing) await recordFailedLogin(existing);
     return { status: 401, json: { success: false, message: 'Invalid email or password' } };
   }
-
-  // Staff login: only staff accounts may sign in here.
-  // Patient accounts are redirected to the patient portal.
+  if (isAccountLocked(row)) return { status: 423, json: { success: false, message: 'Account temporarily locked due to failed sign-in attempts. Try again later or reset your password.' } };
   if (row.role === 'Patient') {
     return { status: 401, json: { success: false, message: 'Please use Patient Login to access the patient portal' } };
   }
+  if ((row as any).status && (row as any).status !== 'active') {
+    return { status: 403, json: { success: false, message: 'Staff account is not active. Contact an administrator.' } };
+  }
 
+  await clearFailedLogin(row.id);
   const actor = { id: row.id, email: row.email, role: row.role };
   await audit(ctx, 'user_login', actor, row.id, 'user', { role: row.role }, ip);
 
   const token = await signJwt({ sub: row.id, email: row.email, role: row.role, aud: 'fidus-staging' }, jwtSecretHex());
+  const fresh = await DB().prepare('SELECT id, name, email, phone, role, department, email_verified_at, status, created_at, updated_at, deleted_at FROM users WHERE id = ?').bind(row.id).first() as any;
   return {
     status: 200,
     json: {
       success: true,
-      data: {
-        ...toPublicUser(row),
-        token,
-      },
+      data: { ...publicUserFromRow(fresh || row), token },
       message: 'Signed in successfully',
     },
   };
@@ -847,9 +975,10 @@ export async function requireAuth(ctx: ExecutionContext, token: string | null, i
   const db = DB();
   if (!db) return { ok: false, status: 500, json: { success: false, message: 'Database unavailable' } };
   const row = (await db.prepare(
-    `SELECT id, name, email, phone, role, department, deleted_at FROM users WHERE id = ?`
+    `SELECT id, name, email, phone, role, department, status, email_verified_at, deleted_at FROM users WHERE id = ?`
   ).bind(decoded.sub).first()) as any;
   if (!row || row.deleted_at) return { ok: false, status: 401, json: { success: false, message: 'User not found or deactivated' } };
+  if (row.status && row.status !== 'active') return { ok: false, status: 403, json: { success: false, message: 'Account is not active' } };
   return { ok: true, status: 200, json: null, user: { ...decoded, role: row.role, email: row.email } };
 }
 
@@ -860,4 +989,109 @@ export async function requireRole(ctx: ExecutionContext, token: string | null, r
     return { ok: false, status: 403, json: { success: false, message: `Role '${a.user.role}' is not authorized for this action` } };
   }
   return a;
+}
+
+// ---------------------------------------------------------------------------
+// Email verification / password reset / chatbot
+// ---------------------------------------------------------------------------
+
+export async function verifyEmail(ctx: ExecutionContext, token: string, ip?: string) {
+  if (!token) return { status: 400, json: { success: false, message: 'Verification token is required' } };
+  const consumed = await consumeAuthToken('email_verification', token);
+  if (!consumed.ok) {
+    const msg = consumed.reason === 'expired' ? 'Verification link has expired' : consumed.reason === 'used' ? 'Verification link has already been used' : 'Invalid verification link';
+    return { status: 400, json: { success: false, message: msg } };
+  }
+  const db = DB();
+  const user = await db.prepare('SELECT id, name, email, role, email_verified_at, status FROM users WHERE id = ? AND deleted_at IS NULL').bind(consumed.row.user_id).first() as any;
+  if (!user) return { status: 404, json: { success: false, message: 'Account not found' } };
+  if (!user.email_verified_at) {
+    await db.prepare(`UPDATE users SET email_verified_at = datetime('now'), status = 'active', updated_at = datetime('now') WHERE id = ?`).bind(user.id).run();
+  }
+  await audit(ctx, 'email_verified', { id: user.id, email: user.email, role: user.role }, user.id, 'user', {}, ip);
+  return { status: 200, json: { success: true, message: 'Email verified successfully. You can now sign in.' } };
+}
+
+export async function resendVerification(ctx: ExecutionContext, body: any, ip?: string) {
+  const email = String(body?.email || '').trim().toLowerCase();
+  if (!isValidEmail(email)) return { status: 400, json: { success: false, message: 'A valid email address is required' } };
+  const rl = rateLimit(`resend-verification:${ip || 'unknown'}:${email}`, 5, 15 * 60 * 1000);
+  if (!rl.ok) return { status: 429, json: { success: false, message: 'Too many requests. Please try again later.' } };
+  const db = DB();
+  const user = await db.prepare('SELECT id, name, email, role, email_verified_at, deleted_at FROM users WHERE email = ? AND deleted_at IS NULL').bind(email).first() as any;
+  if (user && !user.email_verified_at) {
+    const delivery = await sendVerificationEmailForUser(user);
+    await audit(ctx, 'verification_email_resent', { id: user.id, email: user.email, role: user.role }, user.id, 'user', { ok: delivery.ok }, ip);
+  }
+  return { status: 200, json: { success: true, message: 'If an account matches that email, a verification link has been sent.' } };
+}
+
+export async function forgotPassword(ctx: ExecutionContext, body: any, ip?: string) {
+  const email = String(body?.email || body?.identifier || '').trim().toLowerCase();
+  const rl = rateLimit(`forgot-password:${ip || 'unknown'}:${email}`, 5, 15 * 60 * 1000);
+  if (!rl.ok) return { status: 429, json: { success: false, message: 'Too many requests. Please try again later.' } };
+  if (isValidEmail(email)) {
+    const db = DB();
+    const user = await db.prepare('SELECT id, name, email, role, deleted_at FROM users WHERE email = ? AND deleted_at IS NULL').bind(email).first() as any;
+    if (user) {
+      const delivery = await sendPasswordResetEmailForUser(user);
+      await audit(ctx, 'password_reset_requested', { id: user.id, email: user.email, role: user.role }, user.id, 'user', { ok: delivery.ok }, ip);
+    }
+  }
+  return { status: 200, json: { success: true, message: 'If an account matches that email, password reset instructions have been sent.' } };
+}
+
+export async function resetPassword(ctx: ExecutionContext, body: any, ip?: string) {
+  const token = String(body?.token || '').trim();
+  const password = String(body?.password || '');
+  const confirm = body?.passwordConfirmation ?? body?.confirmPassword ?? password;
+  if (!token || !password) return { status: 400, json: { success: false, message: 'Reset token and new password are required' } };
+  if (password.length < 6) return { status: 400, json: { success: false, message: 'Password must be at least 6 characters' } };
+  if (password !== confirm) return { status: 400, json: { success: false, message: 'Passwords do not match' } };
+  const consumed = await consumeAuthToken('password_reset', token);
+  if (!consumed.ok) {
+    const msg = consumed.reason === 'expired' ? 'Reset link has expired' : consumed.reason === 'used' ? 'Reset link has already been used' : 'Invalid reset link';
+    return { status: 400, json: { success: false, message: msg } };
+  }
+  const db = DB();
+  const user = await db.prepare('SELECT id, email, role FROM users WHERE id = ? AND deleted_at IS NULL').bind(consumed.row.user_id).first() as any;
+  if (!user) return { status: 404, json: { success: false, message: 'Account not found' } };
+  const { hash, salt } = await hashPassword(password);
+  await db.prepare(`UPDATE users SET password_hash = ?, password_salt = ?, failed_login_count = 0, locked_until = NULL, updated_at = datetime('now') WHERE id = ?`).bind(hash, salt, user.id).run();
+  await audit(ctx, 'password_reset_completed', { id: user.id, email: user.email, role: user.role }, user.id, 'user', {}, ip);
+  return { status: 200, json: { success: true, message: 'Password reset successfully. You can now sign in.' } };
+}
+
+export async function chatbotQuery(ctx: ExecutionContext, body: any, ip?: string) {
+  const message = String(body?.message || '').trim();
+  if (!message) return { status: 400, json: { success: false, message: 'Message is required' } };
+  const rl = rateLimit(`chatbot:${ip || 'unknown'}`, 30, 5 * 60 * 1000);
+  if (!rl.ok) return { status: 429, json: { success: false, message: 'Too many requests. Please wait a moment and try again.' } };
+  const q = message.toLowerCase();
+  const base = appBaseUrl();
+  const support = (getEnv()?.SUPPORT_EMAIL) || 'consult@fidusmedicals.space';
+
+  let reply = `I can help with Fidus Medical Center services, appointments, telemedicine, home healthcare, screening, outreach, registration, and patient portal navigation. For personal assistance, contact ${support} or call +256705353035.`;
+  if (/(emergency|chest pain|bleeding|unconscious|can't breathe|cant breathe|stroke)/.test(q)) {
+    reply = 'If this may be an emergency, please call local emergency services or Fidus Medical Center immediately at +256705353035. I cannot provide emergency diagnosis or treatment.';
+  } else if (/(book|appointment|schedule)/.test(q)) {
+    reply = `To book an appointment, create or sign in to your patient account at ${base}/register, then use the appointment request options in the patient portal. You can also call +256705353035 for assistance.`;
+  } else if (/(virtual|telemedicine|video|voice consult)/.test(q)) {
+    reply = 'Fidus offers virtual consultations through secure telemedicine where clinically appropriate. Book or request a virtual consultation through the patient portal, and our team will guide you on availability and next steps.';
+  } else if (/(home|nursing|sample collection|home visit|home care)/.test(q)) {
+    reply = 'Fidus provides home healthcare services including home nursing, home consultations, assessments, selected treatments, sample collection, and follow-up visits where supported. Contact us to request home care and confirm availability.';
+  } else if (/(school|institution|outreach|corporate|employee screening|workplace)/.test(q)) {
+    reply = `Fidus provides school and institutional healthcare outreach, health assessments, education, student/staff screening, wellness programmes, and preventive campaigns. Please contact ${support} with your institution details for a tailored programme.`;
+  } else if (/(screen|blood pressure|glucose|wellness)/.test(q)) {
+    reply = 'Fidus offers preventive health screening including general assessments, blood pressure screening, blood glucose screening, basic wellness assessments, and group/institutional screening campaigns based on facility capability.';
+  } else if (/(register|sign up|account|login|password|reset)/.test(q)) {
+    reply = `Patients can register at ${base}/register. Staff registration requires invitation or an approved application. If you forgot your password, use the "Forgot Password" option on the login page; reset links are time-limited for security.`;
+  } else if (/(pay|payment|checkout|bill|receipt)/.test(q)) {
+    reply = 'Fidus checkout supports service payments with clear service summaries and references. Payment confirmations are issued after successful verification. For billing help, contact consult@fidusmedicals.space.';
+  } else if (/(contact|phone|email|whatsapp|where|location)/.test(q)) {
+    reply = 'You can reach Fidus Medical Center at consult@fidusmedicals.space, phone +256705353035, WhatsApp +256751597517, Bugembegembe Wakiso.';
+  }
+
+  await audit(ctx, 'chatbot_query', null, undefined, 'chatbot', { q: message.slice(0, 200) }, ip);
+  return { status: 200, json: { success: true, reply, data: { reply } } };
 }
