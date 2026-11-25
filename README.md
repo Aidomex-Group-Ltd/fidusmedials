@@ -1,4 +1,4 @@
-# 🏥 CarePulse HMS — Frontend Clinical Interface
+# 🏥 Fidus MC HMS — Frontend Clinical Interface
 
 Modern, high-performance Hospital Management System frontend built with **React 19**, **Vite 8**, and **Lucide React**.
 
@@ -76,16 +76,16 @@ production and are hidden in the UI outside development. To use them:
 
 Use the quick demo launcher on the Login page (development only) to test:
 - **Admin**: `munna@gmail.com`
-- **Doctor**: `sarah.cardio@carepulse.com`
-- **Receptionist**: `reception@carepulse.com`
+- **Doctor**: `sarah.cardio@fidusmedicals.space`
+- **Receptionist**: `reception@fidusmedicals.space`
 - **Patient**: `alex.johnson@example.com`
-- **Nurse**: `nurse@carepulse.com`
-- **Midwife**: `midwife@carepulse.com`
-- **Clinician**: `clinician@carepulse.com`
-- **Laboratory Staff**: `lab@carepulse.com`
-- **Pharmacy Staff**: `pharmacy@carepulse.com`
-- **Radiology Staff**: `radiology@carepulse.com`
-- **Admin & Finance**: `finance@carepulse.com`
+- **Nurse**: `nurse@fidusmedicals.space`
+- **Midwife**: `midwife@fidusmedicals.space`
+- **Clinician**: `clinician@fidusmedicals.space`
+- **Laboratory Staff**: `lab@fidusmedicals.space`
+- **Pharmacy Staff**: `pharmacy@fidusmedicals.space`
+- **Radiology Staff**: `radiology@fidusmedicals.space`
+- **Admin & Finance**: `finance@fidusmedicals.space`
 
 Passwords for seeded accounts are provided by the backend seeder
 (`HMS/BACKEND/seeders/seedData.js`). Passwords are **not** stored in the frontend

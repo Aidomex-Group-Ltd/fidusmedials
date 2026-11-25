@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { patientPortalService } from '../../services/api';
+import { patientPortalService, documentService } from '../../services/api';
 import { StatusBadge } from '../../components/common/Badge';
 import { StatCard } from '../../components/common/StatCard';
 import { Modal } from '../../components/common/Modal';
@@ -95,6 +95,7 @@ export const PatientPortal = ({ subTab = 'overview', setSubTab }) => {
   const [reports, setReports] = useState({ lab: [], imaging: [] });
   const [invoices, setInvoices] = useState({ items: [], outstanding: 0, currency: 'UGX' });
   const [profile, setProfile] = useState(null);
+  const [documents, setDocuments] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -139,9 +140,10 @@ export const PatientPortal = ({ subTab = 'overview', setSubTab }) => {
       patientPortalService.reports(),
       patientPortalService.invoices(),
       patientPortalService.profile(),
+      documentService.list(),
     ]);
 
-    const [overviewRes, apptRes, rxRes, reportsRes, invoiceRes, profileRes] = results;
+    const [overviewRes, apptRes, rxRes, reportsRes, invoiceRes, profileRes, documentsRes] = results;
     const picked = results.filter((r) => r.status === 'fulfilled').length;
     if (picked === 0) {
       setError('We could not load your records. Please check your connection and retry.');
@@ -165,6 +167,7 @@ export const PatientPortal = ({ subTab = 'overview', setSubTab }) => {
         currency: invoiceRes.value?.data?.currency || 'UGX',
       });
     }
+    if (documentsRes.status === 'fulfilled') setDocuments(documentsRes.value?.data?.items || []);
     if (profileRes.status === 'fulfilled') {
       const data = profileRes.value?.data;
       setProfile(data);
@@ -248,6 +251,22 @@ export const PatientPortal = ({ subTab = 'overview', setSubTab }) => {
       toast.error(err.message || 'Could not save your profile.');
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const downloadDocument = async (doc) => {
+    try {
+      const blob = await documentService.downloadBlob(doc.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = doc.fileName || 'document';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      toast.error(err.message || 'Could not download the document.');
     }
   };
 
@@ -1024,6 +1043,39 @@ export const PatientPortal = ({ subTab = 'overview', setSubTab }) => {
                 </ul>
               ) : (
                 <EmptyState icon={User} title="No consultations yet" description="Consultation summaries appear after a clinician completes a visit." />
+              )}
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Uploaded documents</h2>
+                  <p className="card-subtitle">Scans and files shared with your record</p>
+                </div>
+              </div>
+              {loading ? (
+                <Skeleton rows={2} />
+              ) : documents.length ? (
+                <ul style={{ listStyle: 'none', padding: '0 1rem 1rem', margin: 0 }}>
+                  {documents.map((doc) => (
+                    <li
+                      key={doc.id}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.65rem 0', borderBottom: '1px solid var(--slate-100)' }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.title}</div>
+                        <div className="text-muted-sm">
+                          {doc.category} · {formatDate(doc.createdAt)}
+                        </div>
+                      </div>
+                      <button className="btn btn-secondary btn-sm" onClick={() => downloadDocument(doc)}>
+                        Download
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState icon={FolderLock} title="No documents yet" description="Files uploaded by your care team appear here." />
               )}
             </div>
           </div>

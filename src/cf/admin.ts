@@ -112,22 +112,72 @@ export async function overview(ctx: Ctx, tokenStr: string | null, ip?: string) {
   });
 }
 
-export async function listStaff(ctx: Ctx, tokenStr: string | null, ip?: string) {
+export async function listStaff(ctx: Ctx, tokenStr: string | null, ip?: string, url?: string) {
   const a = await requireStaffManager(ctx, tokenStr, ip);
   if (!a.ok) return a;
 
-  const staffRows = auth.rows(
-    await auth
-      .DB()
+  const sp = url ? new URL(url).searchParams : new URLSearchParams();
+  const q = String(sp.get('q') || '').trim();
+  const role = String(sp.get('role') || '').trim();
+  const status = String(sp.get('status') || '').trim();
+  const department = String(sp.get('department') || '').trim();
+  const page = Math.max(1, parseInt(sp.get('page') || '1', 10) || 1);
+  const pageSize = Math.min(100, Math.max(5, parseInt(sp.get('page_size') || '20', 10) || 20));
+  const offset = (page - 1) * pageSize;
+
+  const where: string[] = [`u.deleted_at IS NULL`, `u.role != 'Patient'`];
+  const params: any[] = [];
+
+  if (q) {
+    const like = `%${q}%`;
+    where.push(`(u.name LIKE ? OR u.email LIKE ? OR u.id LIKE ? OR u.phone LIKE ?)`);
+    params.push(like, like, like, like);
+  }
+  if (role) {
+    where.push(`u.role = ?`);
+    params.push(role);
+  }
+  if (department) {
+    where.push(`u.department = ?`);
+    params.push(department);
+  }
+  if (status === 'revoked') {
+    where.push(`(u.access_revoked_at IS NOT NULL OR u.status = 'revoked')`);
+  } else if (status === 'pending') {
+    where.push(`u.status IN ('pending_activation','pending_verification','pending')`);
+  } else if (status) {
+    where.push(`u.status = ?`);
+    params.push(status);
+  }
+
+  const whereSql = `WHERE ${where.join(' AND ')}`;
+  const db = auth.DB();
+  const totalRow = (await db
+    .prepare(`SELECT COUNT(*) AS c FROM users u ${whereSql}`)
+    .bind(...params)
+    .first()) as { c: number } | null;
+
+  const items = auth.rows(
+    await db
       .prepare(
-        `SELECT id, name, email, phone, role, department, status, email_verified_at,
-                mfa_enforced, last_login_at, created_at, updated_at, access_revoked_at
-         FROM users WHERE deleted_at IS NULL AND role != 'Patient' ORDER BY created_at DESC LIMIT 500`,
+        `SELECT u.id, u.name, u.email, u.phone, u.role, u.department, u.status, u.email_verified_at,
+                u.mfa_enforced, u.last_login_at, u.created_at, u.updated_at, u.access_revoked_at,
+                u.approved_at, u.activated_at, u.invited_by
+         FROM users u ${whereSql}
+         ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
       )
+      .bind(...params, pageSize, offset)
       .all(),
   );
 
-  return ok({ items: staffRows });
+  const total = totalRow?.c || 0;
+  return ok({
+    items,
+    page,
+    page_size: pageSize,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / pageSize)),
+  });
 }
 
 export async function listInvitations(ctx: Ctx, tokenStr: string | null, ip?: string) {
@@ -136,21 +186,83 @@ export async function listInvitations(ctx: Ctx, tokenStr: string | null, ip?: st
   return auth.listStaffInvitations(ctx, actor, ip);
 }
 
-export async function listAudit(ctx: Ctx, tokenStr: string | null, ip?: string) {
+export async function listAudit(ctx: Ctx, tokenStr: string | null, ip?: string, url?: string) {
   const a = await requireStaffManager(ctx, tokenStr, ip);
   if (!a.ok) return a;
 
-  const auditRows = auth.rows(
-    await auth
-      .DB()
-      .prepare(
-        `SELECT id, event, actor_id, actor_email, actor_role, target_id, target_type, details, ip, created_at
-         FROM audit_log ORDER BY created_at DESC LIMIT 200`,
-      )
+  const sp = url ? new URL(url).searchParams : new URLSearchParams();
+  const q = String(sp.get('q') || '').trim();
+  const source = String(sp.get('source') || '').trim();
+  const outcome = String(sp.get('outcome') || '').trim();
+  const page = Math.max(1, parseInt(sp.get('page') || '1', 10) || 1);
+  const pageSize = Math.min(100, Math.max(5, parseInt(sp.get('page_size') || '25', 10) || 25));
+  const offset = (page - 1) * pageSize;
+
+  // Privileged admin actions and authentication events live in two tables; the
+  // oversight screen must show both in one chronological feed.
+  const feed = `
+    SELECT id, 'privileged' AS source, action AS event, actor_id, actor_email, actor_role,
+           target_id, target_type, target_email, reason, outcome, ip, created_at,
+           previous_state, new_state, NULL AS details
+    FROM admin_audit
+    UNION ALL
+    SELECT id, 'auth' AS source, event, actor_id, actor_email, actor_role,
+           target_id, target_type, NULL AS target_email, NULL AS reason, 'success' AS outcome,
+           ip, created_at, NULL AS previous_state, NULL AS new_state, details
+    FROM audit_log`;
+
+  const where: string[] = [];
+  const params: any[] = [];
+  if (q) {
+    const like = `%${q}%`;
+    where.push(`(event LIKE ? OR actor_email LIKE ? OR target_email LIKE ? OR target_id LIKE ? OR reason LIKE ?)`);
+    params.push(like, like, like, like, like);
+  }
+  if (source) {
+    where.push(`source = ?`);
+    params.push(source);
+  }
+  if (outcome) {
+    where.push(`outcome = ?`);
+    params.push(outcome);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const db = auth.DB();
+
+  const totalRow = (await db
+    .prepare(`SELECT COUNT(*) AS c FROM (${feed}) ${whereSql}`)
+    .bind(...params)
+    .first()) as { c: number } | null;
+
+  const rows = auth.rows(
+    await db
+      .prepare(`SELECT * FROM (${feed}) ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .bind(...params, pageSize, offset)
       .all(),
   );
 
-  return ok({ items: auditRows });
+  const parse = (value: any) => {
+    if (!value) return null;
+    try {
+      return JSON.parse(String(value));
+    } catch {
+      return value;
+    }
+  };
+
+  const total = totalRow?.c || 0;
+  return ok({
+    items: rows.map((r: any) => ({
+      ...r,
+      previous_state: parse(r.previous_state),
+      new_state: parse(r.new_state),
+      details: parse(r.details),
+    })),
+    page,
+    page_size: pageSize,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / pageSize)),
+  });
 }
 
 // ---------------------------------------------------------------------------

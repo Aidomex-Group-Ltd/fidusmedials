@@ -24,7 +24,7 @@ export const RoleSwitcher = () => {
   const handleRoleSwitch = async (roleName) => {
     try {
       if (import.meta.env.VITE_FAKE_AUTH_TOKEN) {
-        fakeDevLogin('dev-user', roleName, `Dev ${roleName}`, `dev.${roleName.toLowerCase()}@carepulse.local`);
+        fakeDevLogin('dev-user', roleName, `Dev ${roleName}`, `dev.${roleName.toLowerCase()}@fidusmc.local`);
         toast.success(`Switched dev role to ${roleName}`);
         return;
       }

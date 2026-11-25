@@ -7,7 +7,7 @@ export const ChatBot = () => {
   const [messages, setMessages] = useState([
     {
       role: 'model',
-      text: 'Hello! I am your **CarePulse Clinical Assistant**.\n\nAsk me anything about registered patients (e.g. *Sameer*, *Alex*), doctor schedules, bed occupancy, appointments, or billing records.',
+      text: 'Hello! I am your **Fidus MC Clinical Assistant**.\n\nAsk me anything about registered patients (e.g. *Sameer*, *Alex*), doctor schedules, bed occupancy, appointments, or billing records.',
     },
   ]);
   const [input, setInput] = useState('');
@@ -170,14 +170,14 @@ export const ChatBot = () => {
 
       {/* Expanded chat window */}
       {isOpen && (
-        <div className="chatbot-panel" role="dialog" aria-label="CarePulse clinical assistant">
+        <div className="chatbot-panel" role="dialog" aria-label="Fidus MC clinical assistant">
           <div className="chatbot-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', minWidth: 0 }}>
               <div className="chatbot-header-icon">
                 <Stethoscope size={18} />
               </div>
               <div style={{ minWidth: 0 }}>
-                <div className="chatbot-title">CarePulse Assistant</div>
+                <div className="chatbot-title">Fidus MC Assistant</div>
                 <div className="chatbot-status">
                   <span className="chatbot-status-dot" />
                   Connected to hospital records

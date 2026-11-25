@@ -3,7 +3,13 @@
 ## 🎉 Staging
 
 - Worker name: `fidus-staging`
-- Staging URL: **https://fidus-staging.aidomexgroupltd.workers.dev** (verified via `curl` → HTTP 200 on `/`)
+- Staging URL: **https://fidus-staging.aidomexgroupltd.workers.dev**
+- Last deploy: `2026-11-25`, version `5e72402a-7fb6-483d-a47e-466fbbb4f8c1`
+- Bindings: D1 `fidus-staging-db`, R2 `fidus-documents` (`DOCUMENTS`)
+- Migrations `004_patient_clinical_records.sql` and
+  `005_beds_and_documents.sql` applied to staging D1.
+- `/api/health` verified (HTTP 200); `/api/beds`, `/api/documents` and
+  `/api/dashboard/stats` return 401 without a session (routes present).
 
 ## 🔒 Security
 
@@ -14,9 +20,21 @@
 
 ## Production
 
-- Worker name: `fidus-production`
-- Deployment status: not deployed (never promote staging)
-- TODO: deploy via `npx wrangler deploy --env production` and add custom domain after approval.
+- Worker name: `fidusmedials` (as configured under `env.production`)
+- URLs: **https://fidusmedicals.space** and **https://www.fidusmedicals.space**
+- Last deploy: `2026-11-25`, version `35df7061-4f14-48d4-b41b-b848e54ff72c`
+- Bindings: D1 `fidusmeduals-prod`, R2 `fidus-documents-prod` (`DOCUMENTS`)
+- Secrets set: `JWT_SECRET`, `SESSION_SECRET`, `RESEND_API_KEY`
+- Migrations applied: `002`, the production column completion,
+  `004_patient_clinical_records.sql`, `005_beds_and_documents.sql`.
+- Initial System Administrator: `consult@fidusmedicals.space` (temporary
+  password issued separately — change it after first sign-in).
+- `/api/health` returns `"version":"production"` on both domains.
+- Production e2e passed: admin login, dashboard stats, patient registration and
+  login, bed admission/discharge, R2 document upload/download/delete, patient
+  isolation, and SSE notifications.
+- Resend delivery verified to `lokangtom2017@gmail.com`
+  (message id `01a210e6-41c6-71de-9c95-1ae753533334`).
 
 ## Tooling
 
@@ -32,6 +50,18 @@ Also: `cf projects list`, `cf workers list`, `cf deployments` (where applicable)
 
 ## Pending
 
-- [ ] Deploy backend Worker and expose `/api/health`.
-- [ ] Point `VITE_API_URL` at the deployed staging backend, redeploy, retest.
-- [ ] Approve production deployment; add custom domain.
+- [x] Apply `004_patient_clinical_records.sql` and `005_beds_and_documents.sql`
+      to the staging D1 database.
+- [x] Create the R2 buckets bound as `DOCUMENTS`: `fidus-documents` (staging)
+      and `fidus-documents-prod` (production).
+- [x] Deploy backend Worker; `/api/health` verified on staging.
+- [x] Frontend is served same-origin by the Worker (`/api`), so no
+      `VITE_API_URL` hostname is required.
+- [x] Production deployed with custom domains:
+      `fidusmedicals.space` and `www.fidusmedicals.space`.
+- [x] Resend delivery verified with a real recipient
+      (`lokangtom2017@gmail.com`).
+- [ ] Rotate the temporary production System Administrator password after the
+      first sign-in.
+- [ ] Visual/browser verification of the updated layouts (no browser available
+      during this pass).

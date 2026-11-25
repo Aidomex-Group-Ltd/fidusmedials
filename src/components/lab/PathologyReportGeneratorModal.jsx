@@ -141,7 +141,7 @@ export const PathologyReportGeneratorModal = ({ isOpen, onClose, defaultPatient 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', borderBottom: '2px solid var(--primary-600)', paddingBottom: '1rem', marginBottom: '1.25rem' }}>
             <div>
               <div style={{ fontSize: '1.35rem', fontWeight: '900', color: 'var(--primary-800)', letterSpacing: '-0.02em' }}>
-                CarePulse Diagnostic Pathology Institute
+                Fidus MC Diagnostic Pathology Institute
               </div>
               <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
                 Accredited Clinical Pathology & Automated Biomarker Laboratory • ISO 15189 Certified
@@ -275,7 +275,7 @@ export const PathologyReportGeneratorModal = ({ isOpen, onClose, defaultPatient 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', borderTop: '1px solid var(--slate-200)', paddingTop: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
               <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('CAREPULSE-LAB-REPORT-VERIFIED-' + patientId + '-' + panelType)}`}
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('FIDUSMC-LAB-REPORT-VERIFIED-' + patientId + '-' + panelType)}`}
                 alt="Verified Lab QR"
                 style={{ width: '65px', height: '65px', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '2px' }}
               />
@@ -305,7 +305,7 @@ export const PathologyReportGeneratorModal = ({ isOpen, onClose, defaultPatient 
                 </div>
                 <div style={{ fontWeight: '800', fontSize: '0.85rem', color: '#0f172a' }}>{pathologistName}</div>
               </div>
-              <div style={{ fontSize: '0.6875rem', color: '#64748b' }}>Laboratory License: LAB-9921-PATH • CarePulse Diagnostics</div>
+              <div style={{ fontSize: '0.6875rem', color: '#64748b' }}>Laboratory License: LAB-9921-PATH • Fidus MC Diagnostics</div>
             </div>
           </div>
         </div>

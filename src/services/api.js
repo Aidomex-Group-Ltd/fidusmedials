@@ -32,7 +32,12 @@ api.interceptors.response.use(
       error.response?.data?.error ||
       error.message ||
       'An unexpected error occurred. Please try again.';
-    return Promise.reject(new Error(message));
+    const wrapped = new Error(message);
+    // Preserve HTTP status and the backend's machine-readable code so pages can
+    // react to specific cases (e.g. signing in on the wrong portal).
+    wrapped.status = error.response?.status;
+    wrapped.code = error.response?.data?.code;
+    return Promise.reject(wrapped);
   }
 );
 
@@ -54,6 +59,7 @@ export const authService = {
 export const staffService = {
   // Invitation flow: admin creates invitation, invitee accepts with token.
   invite: (data) => api.post('/staff/invite', data),
+  verifyInvitation: (token) => api.get('/staff/invitations/verify', { params: { token } }),
   acceptInvitation: (data) => api.post('/staff/accept-invitation', data),
   // Public staff application (pending admin approval).
   apply: (data) => api.post('/staff/apply', data),
@@ -110,18 +116,20 @@ export const billingService = {
 
 export const bedService = {
   getAll: (params) => api.get('/beds', { params }),
-  allocate: (id, data) => api.put(`/beds/${id}/allocate`, data),
-  discharge: (id) => api.put(`/beds/${id}/discharge`),
   getStats: () => api.get('/beds/stats'),
+  allocate: (data) => api.post('/beds/allocate', data),
+  discharge: (data) => api.post('/beds/discharge', data),
 };
 
-export const uploadService = {
-  uploadFile: (formData) =>
-    api.post('/upload', formData, {
+export const documentService = {
+  list: (params) => api.get('/documents', { params }),
+  upload: (formData) =>
+    api.post('/documents', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  getFiles: (params) => api.get('/upload/files', { params }),
-  deleteFile: (id) => api.delete(`/upload/files/${id}`),
+  remove: (id) => api.delete(`/documents/${id}`),
+  fetchBlob: (id) => api.get(`/documents/${id}/file`, { responseType: 'blob' }),
+  downloadBlob: (id) => api.get(`/documents/${id}/file?download=1`, { responseType: 'blob' }),
 };
 
 export const dashboardService = {
@@ -138,12 +146,17 @@ export const emailService = {
 
 export const adminService = {
   overview: () => api.get('/admin/overview'),
-  staff: () => api.get('/admin/staff'),
+  // Directory and audit accept server-side filters + pagination.
+  staff: (params) => api.get('/admin/staff', { params }),
   invitations: () => api.get('/admin/invitations'),
-  audit: () => api.get('/admin/audit'),
+  audit: (params) => api.get('/admin/audit', { params }),
   updateStatus: (data) => api.post('/admin/users/status', data),
   assignRole: (data) => api.post('/admin/users/role', data),
-  resetPassword: (email) => api.post('/admin/users/reset-password', { email }),
+  resetPassword: (email, reason) => api.post('/admin/users/reset-password', { email, reason }),
+  revokeSessions: (data) => api.post('/admin/users/sessions/revoke', data),
+  resendInvitation: (id) => api.post('/admin/invitations/resend', { id }),
+  cancelInvitation: (id) => api.post('/admin/invitations/cancel', { id }),
+  securitySummary: () => api.get('/admin/security-summary'),
   bootstrapStatus: () => api.get('/admin/bootstrap/status'),
   bootstrapRequest: (email) => api.post('/admin/bootstrap/request', { email }),
   bootstrapVerify: (token) => api.post('/admin/bootstrap/verify', { token }),

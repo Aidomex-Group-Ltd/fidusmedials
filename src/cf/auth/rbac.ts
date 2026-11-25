@@ -37,6 +37,16 @@ export const ROLE_PERMISSION_SUMMARY: Record<string, PermissionCode[]> = {
     'facility:read', 'facility:write', 'reports:read', 'reports:export',
     'system:read', 'user_view', 'audit_read',
   ],
+  // Legacy alias used by older deployments. It carries facility-level staff
+  // management, but never the ability to grant System Administrator access
+  // (that rule is enforced in assignRole/createStaffInvitation).
+  Administrator: [
+    'staff:read', 'staff:invite', 'staff:resend', 'staff:cancel',
+    'staff:apply', 'staff:activate', 'staff:suspend', 'staff:role',
+    'staff:permissions', 'staff:reset', 'staff:verify',
+    'facility:read', 'facility:write', 'reports:read', 'reports:export',
+    'system:read', 'user_view', 'audit_read',
+  ],
   'Medical Director': [
     'patients:read', 'patients:write', 'appointments:read',
     'clinical:consult', 'clinical:prescribe', 'clinical:refer',

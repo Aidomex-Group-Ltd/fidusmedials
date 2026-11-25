@@ -406,6 +406,7 @@ export interface AdminAuditEntry {
   reason?: string;
   ip?: string;
   user_agent?: string;
+  outcome?: 'success' | 'failed' | 'denied';
 }
 
 export type Actor = { id?: string; email?: string; role?: string };
@@ -463,7 +464,7 @@ export async function adminAudit(
         `INSERT INTO admin_audit (id, actor_id, actor_email, actor_role, action, target_type, target_id,
                                    target_email, target_name, previous_state, new_state, reason, ip,
                                    user_agent, outcome, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'success', datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       )
       .bind(
         genId(),
@@ -480,6 +481,7 @@ export async function adminAudit(
         entry.reason ?? null,
         ip,
         entry.user_agent ?? null,
+        entry.outcome ?? 'success',
       )
       .run();
   } catch (e: any) {

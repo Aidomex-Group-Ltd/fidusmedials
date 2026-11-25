@@ -337,7 +337,7 @@ export const Dashboard = ({ setActiveTab }) => {
         <div className="hospital-hero-content">
           <div className="hospital-hero-text">
             <span className="eyebrow">Welcome back{user?.name ? `, ${user.name.split(' ')[0]}` : ''}</span>
-            <h2>CarePulse Medical Institute</h2>
+            <h2>Fidus MC Medical Institute</h2>
             <p>
               OPD consultations, inpatient wards, diagnostics and billing — all in one place.
             </p>

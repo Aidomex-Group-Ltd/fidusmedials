@@ -101,6 +101,7 @@ export {
   approveStaffApplication,
   rejectStaffApplication,
   acceptInvitation,
+  getStaffInvitationInfo,
   listUsers,
   BOOTSTRAP_SYSTEM_ADMINS,
   STAFF_ROLES,

@@ -42,7 +42,7 @@ export const Billing = () => {
     taxPercent: 5,
     paidAmount: 0,
     paymentMethod: 'Credit Card',
-    notes: 'Thank you for choosing CarePulse Hospital.',
+    notes: 'Thank you for choosing Fidus MC Hospital.',
   });
 
   // Record Payment Modal
@@ -150,7 +150,7 @@ export const Billing = () => {
           taxPercent: 5,
           paidAmount: 0,
           paymentMethod: 'Credit Card',
-          notes: 'Thank you for choosing CarePulse Hospital.',
+          notes: 'Thank you for choosing Fidus MC Hospital.',
         });
         fetchInvoices();
         fetchFinancialStats();
@@ -650,7 +650,7 @@ export const Billing = () => {
             <div className="invoice-sheet">
               <div className="rx-header">
                 <div>
-                  <div className="rx-hospital-title">CarePulse Hospital</div>
+                  <div className="rx-hospital-title">Fidus MC Hospital</div>
                   <div style={{ fontSize: '0.8125rem', color: '#64748b' }}>
                     100 Clinical Way, Health District • GSTIN: 27AACCC8821R1Z8
                   </div>

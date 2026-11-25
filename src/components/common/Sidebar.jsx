@@ -67,6 +67,10 @@ export const Sidebar = ({ activeTab, setActiveTab, isOpen = false, onClose }) =>
     { id: 'vault', label: 'Medical Records', icon: FolderLock },
   ];
 
+  // Reception keeps the operational admin pages but must not see the System
+  // Administrator-only modules.
+  const receptionNav = adminNav.filter((item) => !item.id.startsWith('admin-'));
+
   const nurseNav = [
     { id: 'overview', label: 'Ward Overview', icon: Heart },
     { id: 'patients', label: 'Patient Rounds', icon: Clipboard },
@@ -121,19 +125,25 @@ export const Sidebar = ({ activeTab, setActiveTab, isOpen = false, onClose }) =>
     Admin: { nav: adminNav, title: 'Admin Suite', icon: Activity, badge: 'Hospital Ops' },
     Administrator: { nav: adminNav, title: 'Admin Suite', icon: Activity, badge: 'Hospital Ops' },
     'Facility Administrator': { nav: adminNav, title: 'Facility Administration', icon: Shield, badge: 'Facility Admin' },
-    Receptionist: { nav: adminNav, title: 'Reception Suite', icon: Clipboard, badge: 'Front Desk' },
+    Receptionist: { nav: receptionNav, title: 'Reception Suite', icon: Clipboard, badge: 'Front Desk' },
+    'Records Officer': { nav: receptionNav, title: 'Records Office', icon: Clipboard, badge: 'Records' },
     Doctor: { nav: doctorNav, title: 'Doctor Portal', icon: Stethoscope, badge: 'Clinical Desk' },
+    'Medical Director': { nav: doctorNav, title: 'Medical Director', icon: Stethoscope, badge: 'Clinical Oversight' },
     Patient: { nav: patientNav, title: 'Patient Hub', icon: HeartPulse, badge: 'Personal Health' },
     Nurse: { nav: nurseNav, title: 'Nursing Station', icon: Heart, badge: 'Ward Care' },
     Midwife: { nav: midwifeNav, title: 'Maternity Suite', icon: Baby, badge: 'Maternity Care' },
     Clinician: { nav: clinicianNav, title: 'Clinician Portal', icon: Stethoscope, badge: 'Clinical Care' },
     'Laboratory Staff': { nav: labNav, title: 'Laboratory', icon: Microscope, badge: 'Diagnostics' },
+    'Laboratory Personnel': { nav: labNav, title: 'Laboratory', icon: Microscope, badge: 'Diagnostics' },
     'Pharmacy Staff': { nav: pharmacyNav, title: 'Pharmacy', icon: Pill, badge: 'Dispensing' },
+    Pharmacist: { nav: pharmacyNav, title: 'Pharmacy', icon: Pill, badge: 'Dispensing' },
     'Radiology Staff': { nav: radiologyNav, title: 'Radiology', icon: Scan, badge: 'Imaging' },
     'Admin & Finance': { nav: financeNav, title: 'Finance Suite', icon: PiggyBank, badge: 'Finance Ops' },
+    'Billing / Finance Staff': { nav: financeNav, title: 'Finance Suite', icon: PiggyBank, badge: 'Finance Ops' },
   };
 
-  const config = roleConfigs[user?.role] || roleConfigs.Admin;
+  // No default workspace: an unmapped role must not see administrator links.
+  const config = roleConfigs[user?.role] || { nav: [], title: 'Staff account', icon: Shield, badge: 'No workspace' };
   const currentNav = config.nav;
   const portalTitle = config.title;
   const PortalIconComponent = config.icon;
@@ -146,7 +156,7 @@ export const Sidebar = ({ activeTab, setActiveTab, isOpen = false, onClose }) =>
           <PortalIconComponent size={22} />
         </div>
         <div className="brand-text">
-          <span className="brand-title">CarePulse</span>
+          <span className="brand-title">Fidus MC</span>
           <span className="brand-badge">{badgeText}</span>
         </div>
       </div>

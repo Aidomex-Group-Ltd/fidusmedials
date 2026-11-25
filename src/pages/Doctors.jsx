@@ -262,7 +262,7 @@ export const Doctors = ({ setActiveTab }) => {
                 type="email"
                 className="form-input"
                 required
-                placeholder="doctor@carepulse.com"
+                placeholder="doctor@fidusmedicals.space"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               />

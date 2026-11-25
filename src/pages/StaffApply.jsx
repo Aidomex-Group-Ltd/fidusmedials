@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { ArrowLeft, ArrowRight, FileText, Mail, Phone, User } from 'lucide-react';
 
 // Mirrors the backend STAFF_ROLES / STAFF_DEPARTMENTS so the frontend only
 // offers values the server will accept. Keep these in sync with auth.ts.
+// Administrator roles are provisioned by an existing System Administrator and
+// are intentionally not available to self-applicants.
 const STAFF_ROLES = [
-  'Administrator',
   'Receptionist',
   'Doctor',
   'Nurse',

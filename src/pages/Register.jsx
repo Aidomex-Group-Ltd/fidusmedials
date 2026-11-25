@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { staffService } from '../services/api';
 import { ArrowLeft, ArrowRight, Calendar, FileText, Heart, Lock, Mail, Phone, Shield, User } from 'lucide-react';
 
 const GENDERS = ['Male', 'Female', 'Other'];
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
+// Administrator roles are deliberately excluded: a System Administrator account
+// cannot be self-registered. Only an existing System Administrator can provision
+// or approve one; staff apply for their operational role and are assigned access.
 const STAFF_ROLES = [
-  'Administrator', 'Receptionist', 'Doctor', 'Nurse', 'Midwife', 'Clinician',
+  'Receptionist', 'Doctor', 'Nurse', 'Midwife', 'Clinician',
   'Laboratory Staff', 'Pharmacy Staff', 'Radiology Staff', 'Admin & Finance',
 ];
 
@@ -46,6 +50,51 @@ export const Register = ({ onNavigateLogin, onNavigateHome, defaultMode = 'patie
   const [showPw, setShowPw] = useState(false);
   const [showPw2, setShowPw2] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [inviteInfo, setInviteInfo] = useState(null);
+  const [inviteError, setInviteError] = useState('');
+
+  // Invitation emails link to /staff/register?invite=<token>. Open the staff
+  // invitation flow directly instead of dropping the recipient on the patient
+  // registration form.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('invite') || params.get('token');
+    if (!token) return;
+    setMode('staff');
+    setStaffFlow('invite');
+    setInvite((prev) => ({ ...prev, token }));
+  }, []);
+
+  // Resolve the invitation before the recipient types anything so the bound
+  // email, role, and expiry are visible. This never consumes the token.
+  useEffect(() => {
+    const token = invite.token.trim();
+    if (!token) {
+      setInviteInfo(null);
+      setInviteError('');
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await staffService.verifyInvitation(token);
+        if (cancelled) return;
+        setInviteInfo(res?.data || null);
+        setInviteError('');
+        if (res?.data?.name) {
+          setInvite((prev) => ({ ...prev, name: prev.name || res.data.name }));
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setInviteInfo(null);
+        setInviteError(err.message || 'This invitation link is not valid.');
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [invite.token]);
 
   const upPatient = (k) => (e) => setPatient((p) => ({ ...p, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
   const upInvite = (k) => (e) => setInvite((p) => ({ ...p, [k]: e.target.value }));
@@ -80,6 +129,10 @@ export const Register = ({ onNavigateLogin, onNavigateHome, defaultMode = 'patie
   const submitInvite = async (e) => {
     e.preventDefault();
     if (!invite.token) return toast.warning('An invitation token is required.');
+    if (inviteError) return toast.error(inviteError);
+    if (inviteInfo && !inviteInfo.can_accept) {
+      return toast.error('This invitation can no longer be accepted. Ask an administrator for a new one.');
+    }
     if (!invite.name) return toast.warning('Please enter your name.');
     if (!invite.password || invite.password.length < 6) return toast.warning('Password must be at least 6 characters.');
     if (invite.password !== invite.confirm) return toast.warning('Passwords do not match.');
@@ -103,7 +156,7 @@ export const Register = ({ onNavigateLogin, onNavigateHome, defaultMode = 'patie
   const submitApply = async (e) => {
     e.preventDefault();
     if (!apply.name || !apply.email || !apply.role || !apply.department) return toast.warning('Please complete all required fields.');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(app.email)) return toast.warning('Please enter a valid email address.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(apply.email)) return toast.warning('Please enter a valid email address.');
     try {
       setSubmitting(true);
       await applyStaff({
@@ -170,7 +223,7 @@ export const Register = ({ onNavigateLogin, onNavigateHome, defaultMode = 'patie
             <div>
               <div className="cp-staff-flow-note">
                 <Shield size={16} />
-                <p>Staff registration is restricted to authorized Fidus Medical Center personnel. Staff accounts must be verified and approved before access to staff systems is granted. An administrator assigns roles and permissions.</p>
+                <p>Staff registration is restricted to authorized Fidus Medical Center personnel. Staff accounts must be verified and approved before access to staff systems is granted. An administrator assigns roles and permissions. Administrator accounts cannot be created from this page — an existing System Administrator provisions them.</p>
               </div>
               <div className="cp-segmented cp-segmented-sm" role="tablist" aria-label="Staff registration method">
                 <button type="button" role="tab" aria-selected={staffFlow === 'apply'} className={`cp-segmented-btn ${staffFlow === 'apply' ? 'is-active' : ''}`} onClick={() => setStaffFlow('apply')}><FileText size={15} /> Staff Application</button>
@@ -197,12 +250,32 @@ export const Register = ({ onNavigateLogin, onNavigateHome, defaultMode = 'patie
                 </form>
               ) : (
                 <form onSubmit={submitInvite} noValidate>
+                  {inviteInfo && (
+                    <div className={`cp-invite-card ${inviteInfo.can_accept ? 'is-valid' : 'is-blocked'}`}>
+                      <div className="cp-invite-card-head">
+                        {inviteInfo.can_accept ? <FileText size={16} /> : <Lock size={16} />}
+                        <strong>{inviteInfo.can_accept ? 'Invitation verified' : 'Invitation unavailable'}</strong>
+                      </div>
+                      <div className="cp-invite-card-body">
+                        <span><span>Email</span>{inviteInfo.email}</span>
+                        <span><span>Role</span>{inviteInfo.role}</span>
+                        <span><span>Department</span>{inviteInfo.department}</span>
+                        <span><span>Expires</span>{new Date(inviteInfo.expires_at).toLocaleString()}</span>
+                      </div>
+                      <p className="cp-field-hint" style={{ margin: 0 }}>
+                        {inviteInfo.can_accept
+                          ? 'Your account will be created with this email and role. The role cannot be changed here.'
+                          : `This invitation is ${inviteInfo.status}. Sign in if you already have an account, or ask the administrator to resend it.`}
+                      </p>
+                    </div>
+                  )}
+                  {inviteError && <div className="cp-invite-card is-blocked" role="alert"><div className="cp-invite-card-head"><Lock size={16} /><strong>Invitation link problem</strong></div><p className="cp-field-hint" style={{ margin: 0 }}>{inviteError}</p></div>}
                   <div className="form-group"><label className="form-label" htmlFor="inv-token">Invitation token *</label><div className="cp-input-icon"><Lock size={16} aria-hidden="true" /><input id="inv-token" className="form-input" required value={invite.token} onChange={upInvite('token')} placeholder="Paste the token from your invitation link" autoComplete="off" /></div><p className="cp-field-hint">This is the single-use token from the invitation link sent by an administrator. It expires after 7 days.</p></div>
                   <div className="form-group"><label className="form-label" htmlFor="inv-name">Full name *</label><div className="cp-input-icon"><User size={16} aria-hidden="true" /><input id="inv-name" className="form-input" required value={invite.name} onChange={upInvite('name')} placeholder="Your full name" autoComplete="name" /></div></div>
                   <div className="form-group"><label className="form-label" htmlFor="inv-phone">Phone number (optional)</label><div className="cp-input-icon"><Phone size={16} aria-hidden="true" /><input id="inv-phone" type="tel" className="form-input" value={invite.phone} onChange={upInvite('phone')} placeholder="+256700000000" autoComplete="tel" /></div></div>
                   <div className="form-group"><label className="form-label" htmlFor="inv-pw">Password * (min 6 characters)</label><div className="cp-input-icon"><Lock size={16} aria-hidden="true" /><input id="inv-pw" type={showPw ? 'text' : 'password'} className="form-input cp-has-toggle" required minLength="6" value={invite.password} onChange={upInvite('password')} placeholder="Choose a secure password" autoComplete="new-password" /><button type="button" className="cp-pw-toggle" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? 'Hide password' : 'Show password'}>{showPw ? <ArrowRight size={16} /> : <Lock size={16} />}</button></div></div>
                   <div className="form-group"><label className="form-label" htmlFor="inv-pw2">Confirm password *</label><div className="cp-input-icon"><Lock size={16} aria-hidden="true" /><input id="inv-pw2" type={showPw2 ? 'text' : 'password'} className="form-input cp-has-toggle" required minLength="6" value={invite.confirm} onChange={upInvite('confirm')} placeholder="Repeat your password" autoComplete="new-password" /><button type="button" className="cp-pw-toggle" onClick={() => setShowPw2((v) => !v)} aria-label={showPw2 ? 'Hide password' : 'Show password'}>{showPw2 ? <ArrowRight size={16} /> : <Lock size={16} />}</button></div></div>
-                  <button type="submit" className="cp-btn cp-btn-primary cp-btn-lg cp-btn-block" disabled={submitting}>{submitting ? 'Creating account…' : <>Accept Invitation <ArrowRight size={18} /></>}</button>
+                  <button type="submit" className="cp-btn cp-btn-primary cp-btn-lg cp-btn-block" disabled={submitting || (inviteInfo && !inviteInfo.can_accept)}>{submitting ? 'Creating account…' : <>Accept Invitation <ArrowRight size={18} /></>}</button>
                 </form>
               )}
             </div>

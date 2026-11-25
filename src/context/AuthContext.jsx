@@ -12,14 +12,36 @@ const STAFF_ROLES = [
   'Medical Director',
   'Doctor',
   'Receptionist',
+  'Records Officer',
   'Nurse',
   'Midwife',
   'Clinician',
   'Laboratory Staff',
+  'Laboratory Personnel',
   'Pharmacy Staff',
+  'Pharmacist',
   'Radiology Staff',
   'Admin & Finance',
+  'Billing / Finance Staff',
 ];
+
+// Roles that share an operational workspace with a canonical role. Kept here
+// so the flag checks below and the portal router cannot disagree.
+const isOneOf = (role, list) => list.includes(role);
+
+// Every token this app stores is a JWT. Checking its expiry before the first
+// request avoids a guaranteed 401 on /auth/me after a session has expired.
+const tokenIsFresh = (token) => {
+  const payload = String(token || '').split('.')[1];
+  if (!payload) return false;
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')));
+    return typeof json.exp === 'number' ? json.exp * 1000 > Date.now() : true;
+  } catch {
+    return false;
+  }
+};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -29,7 +51,10 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('fidus_token');
-      if (token) {
+      if (token && !tokenIsFresh(token)) {
+        localStorage.removeItem('fidus_token');
+      }
+      if (token && tokenIsFresh(token)) {
         try {
           // Prefer /auth/me for patients; staff endpoints are the same shape.
           const res = await authService.getMe();
@@ -124,16 +149,16 @@ export const AuthProvider = ({ children }) => {
     // seeded admin + a few demo accounts are referenced here.
     const roleCredentials = {
       Admin: { email: 'admin@fidus.staging', password: 'admin123', asStaff: true },
-      Doctor: { email: 'sarah.cardio@carepulse.com', password: 'Doctor@123', asStaff: true },
-      Receptionist: { email: 'reception@carepulse.com', password: 'Staff@123', asStaff: true },
+      Doctor: { email: 'sarah.cardio@fidusmedicals.space', password: 'Doctor@123', asStaff: true },
+      Receptionist: { email: 'reception@fidusmedicals.space', password: 'Staff@123', asStaff: true },
       Patient: { email: 'alex.johnson@example.com', password: 'Patient@123', asStaff: false },
-      Nurse: { email: 'nurse@carepulse.com', password: 'Nurse@123', asStaff: true },
-      Midwife: { email: 'midwife@carepulse.com', password: 'Midwife@123', asStaff: true },
-      Clinician: { email: 'clinician@carepulse.com', password: 'Clinician@123', asStaff: true },
-      'Laboratory Staff': { email: 'lab@carepulse.com', password: 'Lab@123', asStaff: true },
-      'Pharmacy Staff': { email: 'pharmacy@carepulse.com', password: 'Pharmacy@123', asStaff: true },
-      'Radiology Staff': { email: 'radiology@carepulse.com', password: 'Radiology@123', asStaff: true },
-      'Admin & Finance': { email: 'finance@carepulse.com', password: 'Finance@123', asStaff: true },
+      Nurse: { email: 'nurse@fidusmedicals.space', password: 'Nurse@123', asStaff: true },
+      Midwife: { email: 'midwife@fidusmedicals.space', password: 'Midwife@123', asStaff: true },
+      Clinician: { email: 'clinician@fidusmedicals.space', password: 'Clinician@123', asStaff: true },
+      'Laboratory Staff': { email: 'lab@fidusmedicals.space', password: 'Lab@123', asStaff: true },
+      'Pharmacy Staff': { email: 'pharmacy@fidusmedicals.space', password: 'Pharmacy@123', asStaff: true },
+      'Radiology Staff': { email: 'radiology@fidusmedicals.space', password: 'Radiology@123', asStaff: true },
+      'Admin & Finance': { email: 'finance@fidusmedicals.space', password: 'Finance@123', asStaff: true },
     };
 
     const creds = roleCredentials[roleName];
@@ -162,16 +187,16 @@ export const AuthProvider = ({ children }) => {
     // Dev-only.
     switchDemoRole,
     updateUser,
-    isAdmin: ['Administrator', 'System Administrator', 'Facility Administrator'].includes(user?.role),
-    isDoctor: user?.role === 'Doctor',
+    isAdmin: isOneOf(user?.role, ['Administrator', 'System Administrator', 'Facility Administrator']),
+    isDoctor: isOneOf(user?.role, ['Doctor', 'Medical Director']),
     isNurse: user?.role === 'Nurse',
     isMidwife: user?.role === 'Midwife',
     isClinician: user?.role === 'Clinician',
-    isLabStaff: user?.role === 'Laboratory Staff',
-    isPharmacyStaff: user?.role === 'Pharmacy Staff',
+    isLabStaff: isOneOf(user?.role, ['Laboratory Staff', 'Laboratory Personnel']),
+    isPharmacyStaff: isOneOf(user?.role, ['Pharmacy Staff', 'Pharmacist']),
     isRadiologyStaff: user?.role === 'Radiology Staff',
-    isAdminAndFinance: user?.role === 'Admin & Finance',
-    isReceptionist: user?.role === 'Receptionist',
+    isAdminAndFinance: isOneOf(user?.role, ['Admin & Finance', 'Billing / Finance Staff']),
+    isReceptionist: isOneOf(user?.role, ['Receptionist', 'Records Officer']),
     isStaff: STAFF_ROLES.includes(user?.role),
     isPatient: user?.role === 'Patient',
     isPatientAccount: user?.role === 'Patient',

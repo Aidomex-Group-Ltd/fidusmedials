@@ -30,7 +30,7 @@ import {
   rolePermissionsFromDb,
 } from './rbac';
 import { hexToBase32, otpauthUri, verifyTOTP, generateBase32Secret, base32ToHex } from './totp';
-import { isValidDepartment, isValidStaffRole } from './staff';
+import { isValidDepartment, isValidStaffRole, isPrivilegedRole } from './staff';
 import { sendPasswordResetEmailForUser } from './patient';
 
 const json = (status: number, body: any) => ({ status, json: body });
@@ -425,21 +425,43 @@ export async function updateAccountStatus(ctx: ExecutionContext, actor: AuthUser
     .first()) as any;
 
   if (!target || target.deleted_at) return fail(404, 'User not found.');
-  if (target.id === actor.id) return fail(400, 'You cannot change the status of your own account.');
+  if (target.id === actor.id) {
+    await adminAudit(ctx, actor, 'account_status_denied', {
+      target_type: 'user',
+      target_id: target.id,
+      target_email: target.email,
+      reason: 'self_status_change',
+      outcome: 'denied',
+      ip,
+      user_agent: userAgent(ctx),
+    });
+    return fail(400, 'You cannot change the status of your own account.');
+  }
   if (target.role === 'System Administrator') {
     // Only a System Administrator may touch another System Administrator, and
-    // never the last active one.
+    // never the last active one (applies to actions that remove access).
     if (!actorIsSystemAdmin(actor)) {
       return fail(403, 'Only a System Administrator can manage System Administrator accounts.');
     }
-    const admins = (await db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM users
-         WHERE role = 'System Administrator' AND status = 'active' AND access_revoked_at IS NULL AND deleted_at IS NULL`,
-      )
-      .first()) as { c: number };
-    if ((admins?.c || 0) <= 1) {
-      return fail(409, 'This is the last active System Administrator and cannot be suspended or revoked.');
+    if (action === 'suspend' || action === 'revoke') {
+      const admins = (await db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM users
+           WHERE role = 'System Administrator' AND status = 'active' AND access_revoked_at IS NULL AND deleted_at IS NULL`,
+        )
+        .first()) as { c: number };
+      if ((admins?.c || 0) <= 1) {
+        await adminAudit(ctx, actor, `account_${action}_denied`, {
+          target_type: 'user',
+          target_id: target.id,
+          target_email: target.email,
+          reason: 'last_active_system_administrator',
+          outcome: 'denied',
+          ip,
+          user_agent: userAgent(ctx),
+        });
+        return fail(409, 'This is the last active System Administrator and cannot be suspended or revoked.');
+      }
     }
   }
 
@@ -447,18 +469,15 @@ export async function updateAccountStatus(ctx: ExecutionContext, actor: AuthUser
   switch (action) {
     case 'suspend':
       patch.status = 'suspended';
-      patch.suspension_reason = reason;
       break;
     case 'revoke':
       patch.status = 'revoked';
       patch.access_revoked_at = new Date().toISOString();
-      patch.suspension_reason = reason;
       break;
     case 'activate':
     case 'reinstate':
       patch.status = 'active';
       patch.access_revoked_at = null;
-      patch.suspension_reason = null;
       break;
     default:
       return fail(400, 'Unsupported action. Use activate, suspend, reinstate, or revoke.');
@@ -525,18 +544,59 @@ export async function assignRole(ctx: ExecutionContext, actor: AuthUser, body: a
   if (!userId || !role) return fail(400, 'user_id and role are required.');
   if (role !== 'Patient' && !isValidStaffRole(role)) return fail(400, 'Invalid staff role.');
   if (department && !isValidDepartment(department)) return fail(400, 'Invalid department.');
-  if (role === 'System Administrator' && !actorIsSystemAdmin(actor)) {
-    return fail(403, 'Only a System Administrator can assign the System Administrator role.');
+  if (isPrivilegedRole(role) && !actorIsSystemAdmin(actor)) {
+    return fail(403, 'Only a System Administrator can assign an administrative role.');
   }
 
   const db = DB();
   const target = (await db
-    .prepare('SELECT id, name, email, role, department FROM users WHERE id = ? AND deleted_at IS NULL')
+    .prepare('SELECT id, name, email, role, department, status, access_revoked_at FROM users WHERE id = ? AND deleted_at IS NULL')
     .bind(userId)
     .first()) as any;
   if (!target) return fail(404, 'User not found.');
-  if (target.role === 'System Administrator' && !actorIsSystemAdmin(actor)) {
-    return fail(403, 'Only a System Administrator can modify a System Administrator account.');
+
+  // No one can change their own role, regardless of privilege. Elevation is a
+  // two-person action: another System Administrator must perform it.
+  if (target.id === actor.id) {
+    await adminAudit(ctx, actor, 'role_assignment_denied', {
+      target_type: 'user',
+      target_id: target.id,
+      target_email: target.email,
+      reason: 'self_role_change',
+      outcome: 'denied',
+      ip,
+      user_agent: userAgent(ctx),
+    });
+    return fail(400, 'You cannot change your own role. Ask another System Administrator to do it.');
+  }
+  if (isPrivilegedRole(target.role) && !actorIsSystemAdmin(actor)) {
+    return fail(403, 'Only a System Administrator can modify an administrative account.');
+  }
+
+  // Never allow the last active System Administrator to be demoted.
+  if (target.role === 'System Administrator' && role !== 'System Administrator') {
+    const admins = (await db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM users
+         WHERE role = 'System Administrator' AND status = 'active' AND access_revoked_at IS NULL AND deleted_at IS NULL`,
+      )
+      .first()) as { c: number };
+    if ((admins?.c || 0) <= 1) {
+      await adminAudit(ctx, actor, 'role_assignment_denied', {
+        target_type: 'user',
+        target_id: target.id,
+        target_email: target.email,
+        reason: 'last_active_system_administrator',
+        outcome: 'denied',
+        ip,
+        user_agent: userAgent(ctx),
+      });
+      return fail(409, 'This is the last active System Administrator. Promote another administrator before changing this role.');
+    }
+  }
+
+  if (target.role === role && (department || target.department) === target.department) {
+    return fail(400, 'That role and department are already assigned.');
   }
 
   await db
@@ -546,8 +606,10 @@ export async function assignRole(ctx: ExecutionContext, actor: AuthUser, body: a
     .bind(role, department || target.department, target.id)
     .run();
 
-  // Role changes alter effective permissions, so force a re-authentication.
+  // Role changes alter effective permissions, so force a re-authentication and
+  // revoke live sessions immediately.
   await bumpTokenVersion(target.id);
+  await revokeAllSessions(target.id);
 
   await adminAudit(ctx, actor, 'role_assigned', {
     target_type: 'user',
@@ -774,11 +836,19 @@ export async function adminSecuritySummary(ctx: ExecutionContext, actor: AuthUse
     return json(200, {
       success: true,
       data: {
-        suspicious_attempts_24h: await count(
-          `SELECT COUNT(*) AS c FROM admin_audit WHERE outcome != 'success' AND created_at >= datetime('now','-24 hours')`,
-        ),
+        suspicious_attempts_24h:
+          (await count(
+            `SELECT COUNT(*) AS c FROM admin_audit WHERE outcome != 'success' AND created_at >= datetime('now','-24 hours')`,
+          )) +
+          (await count(
+            `SELECT COUNT(*) AS c FROM audit_log
+             WHERE event IN ('user_login_failed','account_locked') AND created_at >= datetime('now','-24 hours')`,
+          )),
         denied_actions_24h: await count(
           `SELECT COUNT(*) AS c FROM admin_audit WHERE outcome = 'denied' AND created_at >= datetime('now','-24 hours')`,
+        ),
+        failed_logins_24h: await count(
+          `SELECT COUNT(*) AS c FROM audit_log WHERE event = 'user_login_failed' AND created_at >= datetime('now','-24 hours')`,
         ),
         locked_accounts: await count(`SELECT COUNT(*) AS c FROM users WHERE locked_until > datetime('now')`),
         suspended_accounts: await count(`SELECT COUNT(*) AS c FROM users WHERE status = 'suspended' AND deleted_at IS NULL`),

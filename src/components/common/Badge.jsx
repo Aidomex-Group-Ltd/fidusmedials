@@ -36,6 +36,7 @@ const STATUS_VARIANTS = {
   available: 'success',
   completed: 'teal',
   discharged: 'teal',
+  maintenance: 'warning',
   // in-flight / attention
   requested: 'warning',
   pending: 'warning',
@@ -58,6 +59,7 @@ const STATUS_VARIANTS = {
   no_show: 'danger',
   overdue: 'danger',
   failed: 'danger',
+  occupied: 'danger',
   discontinued: 'danger',
   expired: 'danger',
   // informational

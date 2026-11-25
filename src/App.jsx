@@ -89,24 +89,61 @@ function DevAuthSettings({ onClose }) {
 }
 
 // Pages available to each role, in sidebar order. URLs are /app/<tab>.
+// The administration tabs must be listed here or the router treats a direct
+// link (or a sidebar click) as invalid and rewrites it back to the dashboard.
+const ADMIN_TABS = [
+  'dashboard',
+  'admin-staff',
+  'admin-invitations',
+  'admin-audit',
+  'appointments',
+  'patients',
+  'doctors',
+  'wards',
+  'prescriptions',
+  'billing',
+  'vault',
+];
+
+// Front-desk staff keep the operational pages but not the System
+// Administrator modules.
+const RECEPTION_TABS = ADMIN_TABS.filter((tab) => !tab.startsWith('admin-'));
+
+const DOCTOR_TABS = ['overview', 'prescriptions', 'patients', 'scans'];
+const LAB_TABS = ['overview', 'samples', 'results', 'reports'];
+const PHARMACY_TABS = ['overview', 'inventory', 'prescriptions', 'favorites'];
+const RADIOLOGY_TABS = ['overview', 'exams', 'reports', 'inventory'];
+const FINANCE_TABS = ['dashboard', 'invoices', 'payments', 'reports'];
+
+// Every role the Worker accepts has an explicit tab list. This is both a UX
+// map and an authorization boundary: an unmapped role must not inherit the
+// administrator workspace by falling through a default.
 export const ROLE_TABS = {
-  Admin: ['dashboard', 'appointments', 'patients', 'doctors', 'wards', 'prescriptions', 'billing', 'vault'],
-  Receptionist: ['dashboard', 'appointments', 'patients', 'doctors', 'wards', 'prescriptions', 'billing', 'vault'],
-  Doctor: ['overview', 'prescriptions', 'patients', 'scans'],
+  Admin: ADMIN_TABS,
+  Administrator: ADMIN_TABS,
+  'System Administrator': ADMIN_TABS,
+  'Facility Administrator': ADMIN_TABS,
+  Receptionist: RECEPTION_TABS,
+  'Records Officer': RECEPTION_TABS,
+  Doctor: DOCTOR_TABS,
+  'Medical Director': DOCTOR_TABS,
   Patient: ['overview', 'appointments', 'prescriptions', 'reports', 'billing', 'profile'],
   Nurse: ['overview', 'patients', 'vitals', 'records'],
   Midwife: ['overview', 'antenatal', 'deliveries', 'postnatal'],
   Clinician: ['overview', 'patients', 'diagnoses', 'referrals'],
-  'Laboratory Staff': ['overview', 'samples', 'results', 'reports'],
-  'Pharmacy Staff': ['overview', 'inventory', 'prescriptions', 'favorites'],
-  'Radiology Staff': ['overview', 'exams', 'reports', 'inventory'],
-  'Admin & Finance': ['dashboard', 'invoices', 'payments', 'reports'],
+  'Laboratory Staff': LAB_TABS,
+  'Laboratory Personnel': LAB_TABS,
+  'Pharmacy Staff': PHARMACY_TABS,
+  Pharmacist: PHARMACY_TABS,
+  'Radiology Staff': RADIOLOGY_TABS,
+  'Admin & Finance': FINANCE_TABS,
+  'Billing / Finance Staff': FINANCE_TABS,
 };
 
 export const DEV_ROLE = 'Admin';
 export const DEV_TABS = ROLE_TABS.Admin;
 
-const tabsForRole = (role) => ROLE_TABS[role] || ROLE_TABS.Admin;
+const tabsForRole = (role) => ROLE_TABS[role] || [];
 
 // Small history-based router: keeps the URL in sync so Back/Refresh/shared links work
 const usePath = () => {
@@ -140,6 +177,7 @@ const MainLayout = () => {
     isPharmacyStaff,
     isRadiologyStaff,
     isAdminAndFinance,
+    logout,
   } = useAuth();
   const [path, navigate] = usePath();
   const [globalSearch, setGlobalSearch] = useState('');
@@ -152,6 +190,7 @@ const MainLayout = () => {
   // Keep the URL valid for the current auth state
   useEffect(() => {
     if (loading) return;
+    if (user && allowedTabs.length === 0) return;
     if (user && (!path.startsWith('/app/') || appTab !== activeTab)) {
       navigate(`/app/${activeTab}`, { replace: true });
     } else if (!user && path.startsWith('/app')) {
@@ -173,7 +212,7 @@ const MainLayout = () => {
     return (
       <div className="app-loading">
         <div className="app-loading-spinner" />
-        <p>Loading CarePulse…</p>
+        <p>Loading Fidus MC…</p>
       </div>
     );
   }
@@ -222,6 +261,27 @@ const MainLayout = () => {
           return <DevAuthSettings onClose={() => navigate('/')} />;
         }
         return <LandingPage onNavigateLogin={() => navigate('/login')} onNavigateRegister={() => navigate('/register')} />;
+  }
+
+  // Fail closed: an unrecognised role gets a clear message, never the admin
+  // workspace. New roles must be added to ROLE_TABS before they can sign in.
+  if (!allowedTabs.length) {
+    return (
+      <div className="app-container">
+        <div className="main-content">
+          <main className="page-body">
+            <div className="cp-auth-form-wrap">
+              <h1 className="cp-auth-title">Role not configured</h1>
+              <p className="cp-auth-sub">
+                Your account role ({user.role}) does not have a staff workspace in this portal yet. Contact a
+                System Administrator to have the role corrected.
+              </p>
+              <button type="button" className="cp-btn cp-btn-primary" onClick={logout}>Sign out</button>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
   }
 
   const renderActivePortal = () => {

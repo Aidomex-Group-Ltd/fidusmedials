@@ -1,10 +1,9 @@
 // src/cf/fidus.ts
-// Fidus staging Worker: serves the built React SPA and the /api/* backend.
-import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
+// Fidus Worker: serves the built React SPA and the /api/* backend.
 import type { ExecutionContext } from '@cloudflare/workers-types';
 
 // Types only; the runtime is provided by the Workers environment.
-type Env = { DB: any; JWT_SECRET: string; SESSION_SECRET: string };
+type Env = { DB: any; DOCUMENTS?: any; ASSETS?: any; JWT_SECRET: string; SESSION_SECRET: string };
 
 // Auth module is bundled by Vite into the worker environment.
 import * as auth from './auth';
@@ -15,6 +14,8 @@ import * as notifications from './notifications';
 import * as workflows from './workflows';
 import * as patientRecords from './patient_records';
 import * as staffDashboard from './staff_dashboard';
+import * as beds from './beds';
+import * as documents from './documents';
 
 const ALLOWED_METHODS: Record<string, string[]> = {
   '/api/health': ['GET', 'OPTIONS'],
@@ -33,6 +34,7 @@ const ALLOWED_METHODS: Record<string, string[]> = {
   '/api/staff/applications/approve': ['POST', 'OPTIONS'],
   '/api/staff/applications/reject': ['POST', 'OPTIONS'],
   '/api/staff/accept-invitation': ['POST', 'OPTIONS'],
+  '/api/staff/invitations/verify': ['GET', 'OPTIONS'],
   '/api/staff/login': ['POST', 'OPTIONS'],
   '/api/staff/me': ['GET', 'OPTIONS'],
   '/api/users': ['GET', 'OPTIONS'],
@@ -90,6 +92,13 @@ const ALLOWED_METHODS: Record<string, string[]> = {
   '/api/patient/activity': ['GET','OPTIONS'],
   '/api/patient/clinicians': ['GET','OPTIONS'],
   '/api/dashboard/stats': ['GET','OPTIONS'],
+  '/api/beds': ['GET','OPTIONS'],
+  '/api/beds/stats': ['GET','OPTIONS'],
+  '/api/beds/allocate': ['POST','OPTIONS'],
+  '/api/beds/discharge': ['POST','OPTIONS'],
+  '/api/documents': ['GET','POST','OPTIONS'],
+  '/api/documents/file': ['GET','OPTIONS'],
+  '/api/documents/item': ['DELETE','OPTIONS'],
 };
 
 function json(body: any, status = 200, headers?: HeadersInit): Response {
@@ -133,10 +142,19 @@ function routeKey(pathname: string): string {
   if (pathname.startsWith('/api/staff/applications/approve')) return '/api/staff/applications/approve';
   if (pathname.startsWith('/api/staff/applications/reject')) return '/api/staff/applications/reject';
   if (pathname === '/api/staff/accept-invitation') return '/api/staff/accept-invitation';
+  if (pathname === '/api/staff/invitations/verify') return '/api/staff/invitations/verify';
   if (pathname === '/api/staff/login') return '/api/staff/login';
   if (pathname === '/api/staff/me') return '/api/staff/me';
   if (pathname === '/api/staff/patients') return '/api/staff/patients';
   if (pathname.startsWith('/api/users')) return '/api/users';
+  if (pathname === '/api/beds' || pathname === '/api/beds/stats' || pathname === '/api/beds/allocate' || pathname === '/api/beds/discharge') {
+    return pathname;
+  }
+  if (pathname === '/api/documents') return '/api/documents';
+  if (pathname.startsWith('/api/documents/')) {
+    const parts = pathname.split('/').filter(Boolean);
+    return parts[3] === 'file' ? '/api/documents/file' : '/api/documents/item';
+  }
   return pathname;
 }
 
@@ -168,13 +186,31 @@ async function handleApi(ctx: ExecutionContext, req: Request, pathname: string, 
     return methodNotAllowed(pathname);
   }
 
+  // Document IDs are path parameters, so they are resolved before the switch
+  // (the switch keys are normalised route templates, not request paths).
+  if (pathname.startsWith('/api/documents/')) {
+    const parts = pathname.split('/').filter(Boolean);
+    const id = parts[2] || '';
+    if (!id || parts.length > 4) return notFound(pathname, true);
+    if (parts[3] === 'file') {
+      if (method !== 'GET') return methodNotAllowed(pathname);
+      const download = new URL(req.url).searchParams.get('download') === '1';
+      return documents.downloadDocument(ctx, bearerToken(req), id, download, ip);
+    }
+    if (parts.length !== 3 || method !== 'DELETE') return notFound(pathname, true);
+    const r = await documents.deleteDocument(ctx, bearerToken(req), id, ip);
+    return json(r.json, r.status);
+  }
+
   switch (pathname) {
     case '/api/health': {
+      const host = new URL(req.url).hostname;
+      const isProduction = host === 'fidusmedicals.space' || host === 'www.fidusmedicals.space';
       return json({
         status: 'healthy',
         system: 'Fidus Medical Center HMS',
         time: new Date().toISOString(),
-        version: 'staging',
+        version: isProduction ? 'production' : 'staging',
       });
     }
 
@@ -254,6 +290,12 @@ async function handleApi(ctx: ExecutionContext, req: Request, pathname: string, 
       return json(res.json, res.status);
     }
 
+    case '/api/staff/invitations/verify': {
+      const token = new URL(req.url).searchParams.get('token') || '';
+      const res = await auth.getStaffInvitationInfo(ctx, { token }, ip);
+      return json(res.json, res.status);
+    }
+
     case '/api/staff/login': {
       const body = await readBodyJson(req);
       const res = await auth.staffLogin(ctx, body, ip);
@@ -320,9 +362,9 @@ async function handleApi(ctx: ExecutionContext, req: Request, pathname: string, 
     }
 
     case '/api/admin/overview': { const r = await admin.overview(ctx, bearerToken(req), ip); return json(r.json, r.status); }
-    case '/api/admin/staff': { const r = await admin.listStaff(ctx, bearerToken(req), ip); return json(r.json, r.status); }
+    case '/api/admin/staff': { const r = await admin.listStaff(ctx, bearerToken(req), ip, req.url); return json(r.json, r.status); }
     case '/api/admin/invitations': { const r = await admin.listInvitations(ctx, bearerToken(req), ip); return json(r.json, r.status); }
-    case '/api/admin/audit': { const r = await admin.listAudit(ctx, bearerToken(req), ip); return json(r.json, r.status); }
+    case '/api/admin/audit': { const r = await admin.listAudit(ctx, bearerToken(req), ip, req.url); return json(r.json, r.status); }
     case '/api/admin/users/status': { const r = await admin.updateUserStatus(ctx, bearerToken(req), await readBodyJson(req), ip); return json(r.json, r.status); }
     case '/api/admin/users/role': { const r = await admin.assignRole(ctx, bearerToken(req), await readBodyJson(req), ip); return json(r.json, r.status); }
     case '/api/admin/users/reset-password': { const r = await admin.adminResetPassword(ctx, bearerToken(req), await readBodyJson(req), ip); return json(r.json, r.status); }
@@ -374,6 +416,18 @@ async function handleApi(ctx: ExecutionContext, req: Request, pathname: string, 
     case '/api/patient/clinicians': { const r = await patientRecords.listClinicians(ctx,bearerToken(req),ip); return json(r.json,r.status); }
     case '/api/dashboard/stats': { const r = await staffDashboard.getDashboardStats(ctx,bearerToken(req),ip); return json(r.json,r.status); }
 
+    case '/api/beds': { const r = await beds.listBeds(ctx, bearerToken(req), req.url, ip); return json(r.json, r.status); }
+    case '/api/beds/stats': { const r = await beds.getBedStats(ctx, bearerToken(req), ip); return json(r.json, r.status); }
+    case '/api/beds/allocate': { const r = await beds.allocateBed(ctx, bearerToken(req), await readBodyJson(req), ip); return json(r.json, r.status); }
+    case '/api/beds/discharge': { const r = await beds.dischargeBed(ctx, bearerToken(req), await readBodyJson(req), ip); return json(r.json, r.status); }
+
+    case '/api/documents': {
+      const r = method === 'GET'
+        ? await documents.listDocuments(ctx, bearerToken(req), req.url, ip)
+        : await documents.uploadDocument(ctx, req, bearerToken(req), ip);
+      return json(r.json, r.status);
+    }
+
     default: {
       return notFound(pathname, true);
     }
@@ -407,30 +461,17 @@ export default {
       return handleApi(ctx, request, pathname, method, ip);
     }
 
-    // Frontend assets via Cloudflare Assets (getAssetFromKV from kv-asset-handler).
-    // Uses the __STATIC_CONTENT / __STATIC_CONTENT_MANIFEST injected by Wrangler
-    // when the assets binding is configured. Fallback to dist/index.html only
-    // when the assets runtime is unavailable (e.g. certain preview/local modes).
-    try {
-      const response = await getAssetFromKV({ request, env, context: ctx }, {
-        cacheControl: 'public, max-age=0, must-revalidate',
-      });
-      if (response) return response;
-    } catch (err) {
-      // If assets binding is unavailable, fall back to serving dist/index.html
-      // for navigation requests and 404 otherwise.
-      console.warn('[fidus] getAssetFromKV unavailable, using dist fallback:', (err as any)?.message);
-    }
-
-    // SPA fallback for frontend navigation requests only.
-    // Serve index.html for the root path and any request that looks like a
-    // browser navigation (HTML accept) when the assets binding did not match.
-    // Always 404 for non-GET/HEAD and for requests that already look like a
-    // static asset path.
+    // Static files are served from the Workers Static Assets binding. Requests
+    // that do not match a file (client-side routes such as /staff/login) fall
+    // back to index.html so a hard refresh or a full-page link still boots the
+    // SPA. Non-GET/HEAD and missing real assets keep returning 404.
     if (method !== 'GET' && method !== 'HEAD') {
       return notFound(pathname, false);
     }
 
+    // Existing files were already served by the static asset router before
+    // this Worker ran. Only unmatched client-side navigation reaches this point.
+    const assets = (env as any)?.ASSETS;
     const accept = request.headers.get('Accept') || '';
     const looksLikeAsset = pathname.includes('.');
     const isNavigation =
@@ -438,35 +479,34 @@ export default {
       (!looksLikeAsset && (accept.includes('text/html') || accept.includes('*/*')));
 
     if (isNavigation) {
-      return serveIndex();
+      const index = await serveIndex(request, assets);
+      if (index) return index;
     }
 
     return notFound(pathname, false);
   },
 };
 
-let _indexHtml: string | null = null;
-
-async function serveIndex(): Promise<Response> {
-  if (_indexHtml) {
-    return new Response(_indexHtml, {
+async function serveIndex(request: Request, assets: any): Promise<Response | null> {
+  const url = new URL('/index.html', request.url);
+  try {
+    // Prefer the Static Assets binding. Some plugin-generated deployments do
+    // not expose it to the Worker, so fall back to an absolute same-zone fetch:
+    // static assets are served before the Worker, so this resolves to the shell.
+    const res = assets
+      ? await assets.fetch(new Request(url.toString(), { method: 'GET', headers: request.headers }))
+      : await fetch(url.toString(), {
+          headers: { Accept: 'text/html', 'User-Agent': 'fidus-spa-shell' },
+        });
+    if (!res.ok) return null;
+    return new Response(await res.arrayBuffer(), {
+      status: 200,
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache',
       },
     });
+  } catch {
+    return null;
   }
-  try {
-    const res = await fetch('./index.html', { redirect: 'follow' });
-    if (res.ok) {
-      _indexHtml = await res.text();
-      return new Response(_indexHtml, {
-        headers: {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-cache',
-        },
-      });
-    }
-  } catch {}
-  return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
 }

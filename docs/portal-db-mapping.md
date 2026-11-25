@@ -46,6 +46,11 @@ that single structural problem rather than adding new surface area.
 | Verify payment | `POST /api/workflows/billing/payments/verify` | `invoices`, `invoice_payments` | Invoice balance + status |
 | Patient self-booking | `POST /api/patient/appointments` | `appointments` (`requested`) | Appointments + staff queue |
 | Patient cancellation request | `POST /api/patient/appointments/cancel` | `appointments` (`cancellation_requested`) | Appointments + staff queue |
+| Admit inpatient | `POST /api/beds/allocate` | `beds`, `bed_admissions` | Health overview activity |
+| Discharge inpatient | `POST /api/beds/discharge` | `beds`, `bed_admissions` | Health overview activity |
+| Upload medical document | `POST /api/documents` | `medical_documents` + R2 `DOCUMENTS` | Profile → Uploaded documents |
+| Download document | `GET /api/documents/:id/file` | `medical_documents` + R2 | Profile → Uploaded documents |
+| Delete document (soft) | `DELETE /api/documents/:id` | `medical_documents` | Staff vault; uploader or administrator |
 
 Patient read endpoints — all scoped server-side to the authenticated patient:
 
@@ -79,8 +84,10 @@ Patient read endpoints — all scoped server-side to the authenticated patient:
 
 ## 5. Status
 
-### Implemented and verified (local D1 + `wrangler dev`)
-* Schema `004_patient_clinical_records.sql` applied; all 16 tables present.
+### Implemented and verified (local D1 + Vite Worker dev server)
+* Schemas `004_patient_clinical_records.sql` and
+  `005_beds_and_documents.sql` applied locally; all clinical, bed and document
+  tables present.
 * Staff → patient sync for appointments (create, reschedule, cancel), prescriptions
   (issue, dispense), laboratory (request → release), imaging (request → release),
   invoices and payments (record → verify, idempotent).
@@ -92,6 +99,17 @@ Patient read endpoints — all scoped server-side to the authenticated patient:
   receives none.
 * Profile editing: contact fields update, clinical fields queue for review,
   protected fields refused.
+* Staff dashboard statistics (`GET /api/dashboard/stats`) are live and role-scoped
+  for every department portal.
+* Wards & beds: 18 seeded beds across ICU, Emergency, General and Private wards;
+  list/stats, admission, duplicate-admission guard, discharge, and admission
+  history in `bed_admissions`. Verified with a real staff session.
+* Document vault: staff upload for a resolved patient, patient upload for self,
+  list, authenticated download, soft delete, 10 MB limit and PDF/image type
+  validation. Verified with a real staff session and two patient accounts —
+  patient A could list/download their file; patient B got an empty list and 403.
+* Notification bell consumes `/api/notifications/stream` via authenticated
+  `fetch` streaming, with the existing 30s poll as fallback.
 
 ### Staff portals (implemented, API-verified)
 * **Laboratory** (`LabPortal`): real queue with patient names, sample collection,
@@ -108,9 +126,8 @@ Patient read endpoints — all scoped server-side to the authenticated patient:
   appointment confirm/check-in/complete/cancel, consultation recording,
   prescription issuing, laboratory and imaging ordering, patient search.
 * **Administration** (`AdminPortal`): system administration tabs, facility
-  appointments/patients/prescriptions oversight and the finance view. Wards/beds
-  and the document vault show an explicit "not implemented" panel rather than
-  simulated figures.
+  appointments/patients/prescriptions oversight, finance, wards/beds and the
+  document vault. All tabs now render a real module; there is no simulated data.
 * **Navbar**: hardcoded demo alerts replaced with the live notification feed;
   role-aware identity. Mobile: the sidebar is now an off-canvas drawer.
 * Queue scoping is enforced server-side: departmental roles see their facility
@@ -118,17 +135,16 @@ Patient read endpoints — all scoped server-side to the authenticated patient:
   see none.
 
 ### Requires external configuration / further work
-* `004` has been applied **locally only**; it must be run on staging D1 before deploy.
-* Resend still rejects `example.com` recipients, so email delivery for staff
-  events is untested end to end (in-app notifications are verified).
-* Wards/beds, the medical document vault and file upload/download are not
-  implemented; those routes now say so instead of rendering mock data.
+* `004` and `005` are applied to both staging and production D1.
+* R2 buckets `fidus-documents` (staging) and `fidus-documents-prod`
+  (production) exist and are bound as `DOCUMENTS`.
+* Resend delivery was verified in production to a real Gmail recipient;
+  `example.com` recipients remain rejected by Resend policy.
 * The UI has been compiled and its APIs exercised, but no browser was available
   in this environment, so layout/interaction was not visually verified.
-* `dashboardService.getStats()` (`/dashboard/stats`) is still unimplemented for
-  the staff dashboards; the patient portal no longer depends on it.
-* Documents/upload (`/upload/*`) is unimplemented — the profile "documents"
-  section currently lists released reports only, not uploaded files.
-* No real-time push: the patient portal refreshes on window focus and provides an
-  explicit Refresh action. SSE (`/api/notifications/stream`) exists but is not
-  consumed by the patient UI.
+* The patient portal refreshes on window focus and provides an explicit Refresh
+  action; the notification bell streams in real time. SSE is not used to refresh
+  clinical sections, so a new report still appears on focus/Refresh.
+* Wards/beds has no bed-creation or maintenance-state transition UI yet; the
+  seeded inventory can be admitted and discharged, but adding a new bed is a
+  migration/administrative task.

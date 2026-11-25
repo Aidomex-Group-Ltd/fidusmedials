@@ -574,7 +574,7 @@ export const Prescriptions = () => {
             <div className="rx-document">
               <div className="rx-header">
                 <div>
-                  <div className="rx-hospital-title">CarePulse Hospital & Medical Institute</div>
+                  <div className="rx-hospital-title">Fidus MC Hospital & Medical Institute</div>
                   <div style={{ fontSize: '0.8125rem', color: '#64748b' }}>
                     100 Clinical Way, Health District • Tel: +1 (555) 010-9000
                   </div>

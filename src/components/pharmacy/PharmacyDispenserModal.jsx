@@ -149,7 +149,7 @@ export const PharmacyDispenserModal = ({ isOpen, onClose, defaultRxId = null }) 
               <input
                 type="text"
                 className="form-input"
-                placeholder="Scan QR or enter Prescription ID (e.g. RX-05001 or CAREPULSE-VERIFIED-RX-...)"
+                placeholder="Scan QR or enter Prescription ID (e.g. RX-05001 or FIDUSMC-VERIFIED-RX-...)"
                 style={{
                   paddingLeft: '2.5rem',
                   backgroundColor: '#ffffff',
@@ -314,7 +314,7 @@ export const PharmacyDispenserModal = ({ isOpen, onClose, defaultRxId = null }) 
               <div className="clinical-panel">
                 <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
                   <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=${encodeURIComponent('CAREPULSE-VERIFIED-RX-' + prescription.prescriptionId + '-' + prescription.patient?.name)}`}
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=${encodeURIComponent('FIDUSMC-VERIFIED-RX-' + prescription.prescriptionId + '-' + prescription.patient?.name)}`}
                     alt="Prescription QR Code"
                     style={{ width: '90px', height: '90px', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '3px', backgroundColor: '#ffffff', margin: '0 auto' }}
                   />

@@ -15,7 +15,68 @@ export const NotificationBell = () => {
     } catch {}
   };
 
-  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 30000);
+    const controller = new AbortController();
+    const token = localStorage.getItem('fidus_token');
+
+    // Consume the Worker's SSE feed with the bearer token (EventSource cannot
+    // send an Authorization header). Polling above remains the fallback if the
+    // stream is unavailable, e.g. behind a proxy that buffers responses.
+    if (token) {
+      (async () => {
+        try {
+          const res = await fetch('/api/notifications/stream', {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+          if (!res.ok || !res.body) return;
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let boundary = buffer.indexOf('\n\n');
+            while (boundary >= 0) {
+              const frame = buffer.slice(0, boundary);
+              buffer = buffer.slice(boundary + 2);
+              const dataLine = frame.split('\n').find((line) => line.startsWith('data:'));
+              if (dataLine) {
+                try {
+                  const payload = JSON.parse(dataLine.slice(5).trim());
+                  if (typeof payload?.unread === 'number') setUnread(payload.unread);
+                  if (Array.isArray(payload?.items) && payload.items.length) {
+                    setItems((prev) => {
+                      const merged = new Map(prev.map((item) => [item.id, item]));
+                      payload.items.forEach((item) => merged.set(item.id, item));
+                      return [...merged.values()]
+                        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                        .slice(0, 30);
+                    });
+                  }
+                } catch {
+                  // Ignore malformed frames; the next poll will reconcile.
+                }
+              }
+              boundary = buffer.indexOf('\n\n');
+            }
+          }
+        } catch (err) {
+          if (err?.name !== 'AbortError') {
+            // Streaming is best-effort; the 30s poll keeps the bell current.
+          }
+        }
+      })();
+    }
+
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, []);
 
   const markRead = async (id) => { try { await notificationService.markRead(id); await load(); } catch {} };
   const markAll = async () => { try { await notificationService.markAllRead(); await load(); } catch {} };

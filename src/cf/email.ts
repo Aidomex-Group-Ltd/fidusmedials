@@ -276,7 +276,11 @@ export function staffInvitationEmail(
   acceptUrl: string,
   expiresAt: string,
   isResend = false,
+  message?: string | null,
 ) {
+  const noteBlock = message
+    ? `<div class="panel"><strong>Message from the administrator</strong><br/>${esc(message).replace(/\n/g, '<br/>')}</div>`
+    : '';
   const html = layout(
     isResend ? 'Your Fidus invitation (resent)' : 'Invitation to join Fidus Medical Center',
     `You have been invited to join Fidus as ${role}.`,
@@ -291,6 +295,7 @@ export function staffInvitationEmail(
         <tr><td style="padding:6px 0;color:#64748b;">Expires</td><td style="padding:6px 0;font-weight:600;">${esc(expiresAt)}</td></tr>
       </table>
     </div>
+    ${noteBlock}
     ${actionButton('Accept Invitation', acceptUrl)}
     <p class="muted">This invitation is single-use and expires on ${esc(expiresAt)}. If you were not expecting it, contact ${esc(supportEmail(env))}.</p>
   `,
@@ -300,6 +305,32 @@ export function staffInvitationEmail(
     subject: isResend ? 'Your Fidus Medical Center invitation (resent)' : 'Invitation to join Fidus Medical Center',
     html,
     text: `You have been invited to join ${BRAND.name} as ${role} in ${department}. Accept: ${acceptUrl}. Expires: ${expiresAt}.`,
+  };
+}
+
+export function staffInvitationAcceptedAdminEmail(
+  env: EmailEnv,
+  adminName: string,
+  member: string,
+  role: string,
+  department: string,
+) {
+  const html = layout('Staff invitation accepted', 'A staff invitation you sent was accepted.', `
+    <h1>Invitation accepted</h1>
+    <p>Hello ${esc(adminName || 'there')},</p>
+    <p><strong>${esc(member)}</strong> accepted your invitation to join ${esc(BRAND.name)}.</p>
+    <div class="panel">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><td style="padding:6px 0;color:#64748b;">Role</td><td style="padding:6px 0;font-weight:600;">${esc(role)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Department</td><td style="padding:6px 0;font-weight:600;">${esc(department)}</td></tr>
+      </table>
+    </div>
+    <p class="muted">Review the new account under Staff Management. The recipient has been activated with the role assigned to the invitation.</p>
+  `, env);
+  return {
+    subject: 'Staff invitation accepted at Fidus Medical Center',
+    html,
+    text: `${member} accepted the invitation as ${role} in ${department}.`,
   };
 }
 

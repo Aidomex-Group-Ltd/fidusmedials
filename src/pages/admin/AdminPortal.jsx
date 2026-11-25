@@ -1,40 +1,42 @@
 import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { SystemAdminPortal } from './SystemAdminPortal';
 import { ClinicalWorkspace } from '../../components/staff/ClinicalWorkspace';
 import { FinancePortal } from '../finance/FinancePortal';
-import { ShieldAlert } from 'lucide-react';
+import { WardsAndBeds } from '../WardsAndBeds';
+import { MedicalFiles } from '../MedicalFiles';
 
 /**
  * Facility administration shell.
  *
- * Replaces the previous wiring, which mounted legacy pages that called
- * endpoints that do not exist (`/patients`, `/appointments`, `/beds`,
- * `/upload/*`) and therefore rendered fake dashboards.
+ * Every tab now renders a module backed by a real D1/R2 endpoint. The previous
+ * wiring mounted legacy pages that called endpoints which did not exist
+ * (`/patients`, `/appointments`, `/beds`, `/upload/*`).
  */
 
 const ADMIN_TABS = ['admin-staff', 'admin-invitations', 'admin-audit', 'admin-security'];
 
-const NotYetAvailable = ({ title, description }) => (
-  <div className="card">
-    <div className="card-header">
-      <div>
-        <h2 className="card-title">{title}</h2>
-        <p className="card-subtitle">{description}</p>
-      </div>
-    </div>
-    <div className="portal-empty-cell" style={{ padding: '2.5rem 1rem', textAlign: 'center' }}>
-      <ShieldAlert size={26} style={{ color: 'var(--slate-400)', marginBottom: 6 }} />
-      <p style={{ fontWeight: 600 }}>This module is not implemented yet</p>
-      <p style={{ color: 'var(--slate-500)', fontSize: '0.85rem' }}>
-        It is listed here rather than shown with placeholder figures. Nothing on this page is simulated data.
-      </p>
-    </div>
-  </div>
-);
+const FACILITY_ADMIN_ROLES = ['System Administrator', 'Administrator', 'Facility Administrator'];
 
 export const AdminPortal = ({ activeTab, setActiveTab }) => {
+  const { user } = useAuth();
+  const isFacilityAdmin = FACILITY_ADMIN_ROLES.includes(user?.role);
+
+  // Only facility administrators may render the System Administration
+  // modules. Other roles that share this shell (Reception, Records) keep the
+  // operational pages and must not hit admin-only endpoints.
   if (ADMIN_TABS.includes(activeTab)) {
-    return <SystemAdminPortal activeTab={activeTab} />;
+    if (!isFacilityAdmin) {
+      return (
+        <ClinicalWorkspace
+          subTab="overview"
+          setSubTab={setActiveTab}
+          roleLabel={user?.role || 'Staff'}
+          subtitle="Facility operations overview"
+        />
+      );
+    }
+    return <SystemAdminPortal activeTab={activeTab} setActiveTab={setActiveTab} />;
   }
 
   switch (activeTab) {
@@ -49,14 +51,24 @@ export const AdminPortal = ({ activeTab, setActiveTab }) => {
     case 'doctors':
       return <ClinicalWorkspace subTab="patients" setSubTab={setActiveTab} roleLabel="Administrator" subtitle="Clinical team and patient assignment" />;
     case 'wards':
-      return <NotYetAvailable title="Wards and beds" description="Bed allocation and ward management" />;
+      return <WardsAndBeds />;
     case 'vault':
-      return <NotYetAvailable title="Medical document vault" description="Secure document storage and delivery" />;
+      return <MedicalFiles />;
     case 'dashboard':
     default:
+      if (!isFacilityAdmin) {
+        return (
+          <ClinicalWorkspace
+            subTab="overview"
+            setSubTab={setActiveTab}
+            roleLabel={user?.role || 'Staff'}
+            subtitle="Facility operations overview"
+          />
+        );
+      }
       return (
         <>
-          <SystemAdminPortal activeTab="dashboard" />
+          <SystemAdminPortal activeTab="dashboard" setActiveTab={setActiveTab} />
           <ClinicalWorkspace subTab="overview" setSubTab={setActiveTab} roleLabel="Administrator" subtitle="Facility operations overview" />
         </>
       );

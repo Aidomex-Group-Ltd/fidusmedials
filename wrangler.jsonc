@@ -11,6 +11,12 @@
       "database_id": "19d312d4-f467-4908-877d-a6fb2dc10ab2"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "DOCUMENTS",
+      "bucket_name": "fidus-documents"
+    }
+  ],
   "vars": {
     "NODE_ENV": "production",
     "EMAIL_FROM": "Fidus Medical Center <noreply@fidusmedicals.space>",
@@ -20,6 +26,7 @@
     "BACKEND_URL": "https://fidus-staging.aidomexgroupltd.workers.dev"
   },
   "assets": {
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "directory": "dist"
   },
@@ -44,6 +51,12 @@
           "database_id": "1f66c7a8-cc0e-45ac-acc8-317993db80a6"
         }
       ],
+      "r2_buckets": [
+        {
+          "binding": "DOCUMENTS",
+          "bucket_name": "fidus-documents-prod"
+        }
+      ],
       "vars": {
         "NODE_ENV": "production",
         "EMAIL_FROM": "Fidus Medical Center <noreply@fidusmedicals.space>",
@@ -53,6 +66,7 @@
         "BACKEND_URL": "https://fidusmedicals.space"
       },
       "assets": {
+        "binding": "ASSETS",
         "not_found_handling": "single-page-application",
         "directory": "dist"
       },

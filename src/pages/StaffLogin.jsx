@@ -4,13 +4,16 @@ import { useToast } from '../context/ToastContext';
 import { ArrowLeft, ArrowRight, Lock, Mail } from 'lucide-react';
 
 export const StaffLogin = ({ onNavigateHome }) => {
-  const { staffLogin, user, logout } = useAuth();
+  const { staffLogin } = useAuth();
   const toast = useToast();
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(
+    () => new URLSearchParams(window.location.search).get('email') || '',
+  );
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [wrongPortal, setWrongPortal] = useState(false);
 
   const busy = submitting;
 
@@ -25,7 +28,13 @@ export const StaffLogin = ({ onNavigateHome }) => {
       await staffLogin(email, password);
       toast.success('Welcome to the Fidus staff portal.');
     } catch (err) {
-      // Staff login returns a clear message when a patient tries staff login.
+      // A patient account must use the patient form. Point them there rather
+      // than leaving them with a bare 401 on the staff page.
+      if (err.code === 'PATIENT_USE_PATIENT_LOGIN') {
+        setWrongPortal(true);
+        toast.info('That email belongs to a patient account. Continue to the patient sign-in page.');
+        return;
+      }
       toast.error(err.message || 'Staff sign-in failed. Check your credentials.');
     } finally {
       setSubmitting(false);
@@ -74,7 +83,7 @@ export const StaffLogin = ({ onNavigateHome }) => {
                   type="email"
                   required
                   autoComplete="email"
-                  placeholder="you@fidus.staging"
+                  placeholder="you@fidusmedicals.space"
                   className="form-input"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -118,6 +127,22 @@ export const StaffLogin = ({ onNavigateHome }) => {
             </button>
           </form>
 
+          {wrongPortal && (
+            <div className="cp-auth-switch" style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--warning-50)', border: '1px solid var(--warning-200)', borderRadius: '10px', color: 'var(--warning-800)', fontSize: '0.9rem' }}>
+              <strong>This is a patient account.</strong> Patient records are accessed from the patient portal.{' '}
+              <button
+                type="button"
+                className="cp-link"
+                onClick={() => {
+                  window.location.href = `/login?email=${encodeURIComponent(email)}`;
+                }}
+              >
+                Continue to Patient Sign in
+              </button>
+              .
+            </div>
+          )}
+
           <p className="cp-auth-switch">
             New to the staff portal?{' '}
             <button type="button" className="cp-link" onClick={() => window.location.href = '/staff/register'}>
@@ -139,15 +164,12 @@ export const StaffLogin = ({ onNavigateHome }) => {
             </button>
           </p>
 
-          {user && user.role === 'Patient' && (
-            <div className="cp-auth-switch" style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--warning-50)', border: '1px solid var(--warning-200)', borderRadius: '10px', color: 'var(--warning-800)', fontSize: '0.9rem' }}>
-              <strong>Not the right portal?</strong> You are signed in as a patient.{' '}
-              <button type="button" className="cp-link" onClick={async () => { await logout(); window.location.href = '/login'; }}>
-                Go to Patient Login
-              </button>
-              .
-            </div>
-          )}
+          <p className="cp-auth-switch">
+            Looking for your health records?{' '}
+            <button type="button" className="cp-link" onClick={() => window.location.href = '/login'}>
+              Patient sign in
+            </button>
+          </p>
         </div>
       </main>
     </div>

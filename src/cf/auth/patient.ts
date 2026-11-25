@@ -286,10 +286,26 @@ export async function login(ctx: ExecutionContext, body: any, ip?: string) {
   const row = await verifyCredentials(identifier, password);
   if (!row) {
     const existing = await findUserByContact(identifier);
-    if (existing) await recordFailedLogin(existing);
+    if (existing) {
+      await recordFailedLogin(existing);
+      await audit(ctx, 'user_login_failed', { id: existing.id, email: existing.email, role: existing.role }, existing.id, 'user', {
+        reason: 'invalid_password',
+        portal: 'patient',
+        failed_attempts: Number(existing.failed_login_count || 0) + 1,
+      }, ip);
+    } else {
+      await audit(ctx, 'user_login_failed', { email: identifier }, undefined, 'user', {
+        reason: 'unknown_account',
+        portal: 'patient',
+      }, ip);
+    }
     return { status: 401, json: { success: false, message: 'Invalid email or phone, or password' } };
   }
   if (isAccountLocked(row)) {
+    await audit(ctx, 'account_locked', { id: row.id, email: row.email, role: row.role }, row.id, 'user', {
+      reason: 'failed_login_threshold',
+      locked_until: row.locked_until,
+    }, ip);
     return {
       status: 423,
       json: {
@@ -299,7 +315,14 @@ export async function login(ctx: ExecutionContext, body: any, ip?: string) {
     };
   }
   if (row.role !== 'Patient') {
-    return { status: 401, json: { success: false, message: 'Please use Staff Login to access staff systems' } };
+    return {
+      status: 401,
+      json: {
+        success: false,
+        code: 'STAFF_USE_STAFF_LOGIN',
+        message: 'This is a staff account. Please use the Staff Login page.',
+      },
+    };
   }
   if (row.status && row.status !== 'active') {
     return {
@@ -449,25 +472,60 @@ export async function resetPassword(ctx: ExecutionContext, body: any, ip?: strin
 
   const db = DB();
   const user = (await db
-    .prepare('SELECT id, email, role FROM users WHERE id = ? AND deleted_at IS NULL')
+    .prepare('SELECT id, email, role, status FROM users WHERE id = ? AND deleted_at IS NULL')
     .bind(consumed.row.user_id)
     .first()) as any;
   if (!user) return { status: 404, json: { success: false, message: 'Account not found' } };
 
+  // An approved staff application creates the account as pending_activation and
+  // sends this one-time link. Completing it must also activate the account,
+  // otherwise the new member sets a password and is still refused at sign-in.
+  const activating = user.status === 'pending_activation';
+
   const { hash, salt } = await hashPassword(password);
-  await db
-    .prepare(
-      `UPDATE users SET password_hash = ?, password_salt = ?, failed_login_count = 0,
-                       locked_until = NULL, password_changed_at = datetime('now'),
-                       updated_at = datetime('now') WHERE id = ?`,
-    )
-    .bind(hash, salt, user.id)
-    .run();
+  if (activating) {
+    await db
+      .prepare(
+        `UPDATE users SET password_hash = ?, password_salt = ?, status = 'active',
+                         activated_at = COALESCE(activated_at, datetime('now')),
+                         email_verified_at = COALESCE(email_verified_at, datetime('now')),
+                         failed_login_count = 0, locked_until = NULL,
+                         password_changed_at = datetime('now'),
+                         updated_at = datetime('now') WHERE id = ?`,
+      )
+      .bind(hash, salt, user.id)
+      .run();
+  } else {
+    await db
+      .prepare(
+        `UPDATE users SET password_hash = ?, password_salt = ?, failed_login_count = 0,
+                         locked_until = NULL, password_changed_at = datetime('now'),
+                         updated_at = datetime('now') WHERE id = ?`,
+      )
+      .bind(hash, salt, user.id)
+      .run();
+  }
 
   // A password change invalidates all existing sessions.
   await bumpTokenVersion(user.id);
   await revokeAllSessions(user.id);
 
-  await audit(ctx, 'password_reset_completed', { id: user.id, email: user.email, role: user.role }, user.id, 'user', {}, ip);
-  return { status: 200, json: { success: true, message: 'Password reset successfully. You can now sign in.' } };
+  await audit(
+    ctx,
+    activating ? 'staff_account_activated' : 'password_reset_completed',
+    { id: user.id, email: user.email, role: user.role },
+    user.id,
+    'user',
+    activating ? { activation: 'password_link_completed' } : {},
+    ip,
+  );
+  return {
+    status: 200,
+    json: {
+      success: true,
+      message: activating
+        ? 'Account activated successfully. You can now sign in.'
+        : 'Password reset successfully. You can now sign in.',
+    },
+  };
 }
