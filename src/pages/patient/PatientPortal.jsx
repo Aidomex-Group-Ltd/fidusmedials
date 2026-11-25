@@ -1,1070 +1,1261 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import {
-  dashboardService,
-  appointmentService,
-  prescriptionService,
-  billingService,
-  uploadService,
-  doctorService,
-} from '../../services/api';
+import { patientPortalService } from '../../services/api';
 import { StatusBadge } from '../../components/common/Badge';
 import { StatCard } from '../../components/common/StatCard';
 import { Modal } from '../../components/common/Modal';
-import { SymptomTriageModal } from '../../components/triage/SymptomTriageModal';
-import { TelehealthRoomModal } from '../../components/telehealth/TelehealthRoomModal';
-import { PathologyReportGeneratorModal } from '../../components/lab/PathologyReportGeneratorModal';
 import {
-  Video,
-  Microscope,
-  Stethoscope,
-  HeartPulse,
   Calendar,
   FileCheck,
   Receipt,
   FolderLock,
-  User,
   Plus,
   Printer,
-  CreditCard,
-  Eye,
   AlertTriangle,
   Clock,
-  MapPin,
-  Star,
   CheckCircle,
   Shield,
-  Phone,
+  RefreshCw,
+  User,
+  Microscope,
+  ScanLine,
 } from 'lucide-react';
+
+const DEPARTMENTS = [
+  'General',
+  'Medical Consultation',
+  'Laboratory',
+  'Radiology and Ultrasound',
+  'Pharmacy',
+  'Maternity',
+  'Dental',
+  'Paediatrics',
+  'Physiotherapy',
+];
+
+const formatDateTime = (value) => {
+  if (!value) return 'Not scheduled';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(undefined, {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatDate = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
+};
+
+const money = (amount, currency = 'UGX') =>
+  `${currency} ${Number(amount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+
+const EmptyState = ({ icon: Icon, title, description, action }) => (
+  <div className="portal-empty-cell" style={{ padding: '2.5rem 1rem', textAlign: 'center' }}>
+    {Icon ? <Icon size={28} style={{ color: 'var(--slate-400)', marginBottom: '0.5rem' }} /> : null}
+    <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{title}</p>
+    <p style={{ color: 'var(--slate-500)', fontSize: '0.875rem' }}>{description}</p>
+    {action}
+  </div>
+);
+
+const Skeleton = ({ rows = 3 }) => (
+  <div style={{ padding: '1rem' }} aria-busy="true" aria-label="Loading">
+    {Array.from({ length: rows }).map((_, index) => (
+      <div
+        key={index}
+        style={{
+          height: 16,
+          margin: '0.75rem 0',
+          borderRadius: 6,
+          background: 'linear-gradient(90deg, var(--slate-100), var(--slate-200), var(--slate-100))',
+          width: `${90 - index * 12}%`,
+        }}
+      />
+    ))}
+  </div>
+);
 
 export const PatientPortal = ({ subTab = 'overview', setSubTab }) => {
   const { user } = useAuth();
   const toast = useToast();
 
-  // The active page comes from the URL (/app/<tab>) via the sidebar
   const currentTab = subTab || 'overview';
   const setCurrentTab = (tab) => setSubTab?.(tab);
-  const [data, setData] = useState(null);
+
+  const [overview, setOverview] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [prescriptions, setPrescriptions] = useState([]);
-  const [invoices, setInvoices] = useState([]);
-  const [scans, setScans] = useState([]);
-  const [doctors, setDoctors] = useState([]);
+  const [reports, setReports] = useState({ lab: [], imaging: [] });
+  const [invoices, setInvoices] = useState({ items: [], outstanding: 0, currency: 'UGX' });
+  const [profile, setProfile] = useState(null);
+
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [appointmentFilter, setAppointmentFilter] = useState('all');
 
-  // Booking Modal
   const [isBookingOpen, setIsBookingOpen] = useState(false);
-  const [selectedDoctor, setSelectedDoctor] = useState(null);
-  const [availableSlots, setAvailableSlots] = useState([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [bookingForm, setBookingForm] = useState({
-    doctorId: '',
-    department: '',
-    appointmentDate: new Date().toISOString().split('T')[0],
-    timeSlot: '',
-    type: 'General Checkup',
-    reasonForVisit: '',
-    symptoms: '',
+  const [booking, setBooking] = useState({
+    department: 'General',
+    scheduledAt: new Date().toISOString().slice(0, 10),
+    time: '09:00',
+    appointmentType: 'Consultation',
+    reason: '',
   });
+  const [submitting, setSubmitting] = useState(false);
 
-  // Print & Feature modals
   const [selectedRx, setSelectedRx] = useState(null);
+  const [selectedLab, setSelectedLab] = useState(null);
+  const [selectedImaging, setSelectedImaging] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
-  const [viewScan, setViewScan] = useState(null);
-  const [submittingBooking, setSubmittingBooking] = useState(false);
-  const [isTriageOpen, setIsTriageOpen] = useState(false);
-  const [isTelehealthOpen, setIsTelehealthOpen] = useState(false);
-  const [telehealthDoc, setTelehealthDoc] = useState(null);
-  const [isPathologyOpen, setIsPathologyOpen] = useState(false);
+
+  const [profileForm, setProfileForm] = useState({
+    preferred_name: '',
+    phone: '',
+    address: '',
+    city: '',
+    emergency_contact_name: '',
+    emergency_contact_phone: '',
+    emergency_contact_relationship: '',
+    insurance_provider: '',
+    insurance_number: '',
+  });
+  const [changeRequest, setChangeRequest] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const results = await Promise.allSettled([
+      patientPortalService.overview(),
+      patientPortalService.appointments({ filter: appointmentFilter }),
+      patientPortalService.prescriptions(),
+      patientPortalService.reports(),
+      patientPortalService.invoices(),
+      patientPortalService.profile(),
+    ]);
+
+    const [overviewRes, apptRes, rxRes, reportsRes, invoiceRes, profileRes] = results;
+    const picked = results.filter((r) => r.status === 'fulfilled').length;
+    if (picked === 0) {
+      setError('We could not load your records. Please check your connection and retry.');
+      setLoading(false);
+      return;
+    }
+
+    if (overviewRes.status === 'fulfilled') setOverview(overviewRes.value?.data || null);
+    if (apptRes.status === 'fulfilled') setAppointments(apptRes.value?.data?.items || []);
+    if (rxRes.status === 'fulfilled') setPrescriptions(rxRes.value?.data?.items || []);
+    if (reportsRes.status === 'fulfilled') {
+      setReports({
+        lab: reportsRes.value?.data?.lab || [],
+        imaging: reportsRes.value?.data?.imaging || [],
+      });
+    }
+    if (invoiceRes.status === 'fulfilled') {
+      setInvoices({
+        items: invoiceRes.value?.data?.items || [],
+        outstanding: invoiceRes.value?.data?.outstanding || 0,
+        currency: invoiceRes.value?.data?.currency || 'UGX',
+      });
+    }
+    if (profileRes.status === 'fulfilled') {
+      const data = profileRes.value?.data;
+      setProfile(data);
+      setProfileForm({
+        preferred_name: data?.personal?.preferredName || '',
+        phone: data?.personal?.phone || '',
+        address: data?.personal?.address || '',
+        city: data?.personal?.city || '',
+        emergency_contact_name: data?.emergencyContact?.name || '',
+        emergency_contact_phone: data?.emergencyContact?.phone || '',
+        emergency_contact_relationship: data?.emergencyContact?.relationship || '',
+        insurance_provider: data?.insurance?.provider || '',
+        insurance_number: data?.insurance?.number || '',
+      });
+    }
+    setLoading(false);
+  }, [appointmentFilter]);
 
   useEffect(() => {
-    fetchPatientData();
-  }, [user]);
+    loadAll();
+  }, [loadAll]);
 
-  const fetchPatientData = async () => {
+  // Refresh when the patient returns to the tab: records change while the page
+  // is open, and the portal must not depend on a hard reload to notice.
+  useEffect(() => {
+    const onFocus = () => loadAll();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [loadAll]);
+
+  const patient = overview?.patient || {};
+  const metrics = overview?.metrics || {};
+  const health = overview?.health || {};
+  const upcoming = useMemo(
+    () => appointments.filter((a) => ['requested', 'confirmed', 'rescheduled', 'checked_in'].includes(a.status)),
+    [appointments],
+  );
+
+  const submitBooking = async (event) => {
+    event.preventDefault();
+    if (!booking.reason.trim()) {
+      toast.warning('Please describe the reason for your visit.');
+      return;
+    }
     try {
-      setLoading(true);
-      const [dashRes, apptRes, rxRes, invRes, scanRes, docRes] = await Promise.all([
-        dashboardService.getStats(),
-        appointmentService.getAll(),
-        prescriptionService.getAll(),
-        billingService.getInvoices(),
-        uploadService.getFiles(),
-        doctorService.getAll(),
-      ]);
-
-      if (dashRes.success) setData(dashRes.data);
-      if (apptRes.success) setAppointments(apptRes.data);
-      if (rxRes.success) setPrescriptions(rxRes.data);
-      if (invRes.success) setInvoices(invRes.data);
-      if (scanRes.success) setScans(scanRes.data);
-      if (docRes.success) setDoctors(docRes.data);
+      setSubmitting(true);
+      const res = await patientPortalService.requestAppointment(booking);
+      toast.success(res?.message || 'Appointment requested.');
+      setIsBookingOpen(false);
+      setBooking((prev) => ({ ...prev, reason: '' }));
+      await loadAll();
+      setCurrentTab('appointments');
     } catch (err) {
-      console.error('Failed to load patient portal data', err);
+      toast.error(err.message || 'Could not send your appointment request.');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
-  const handleDoctorPick = async (doc) => {
-    setSelectedDoctor(doc);
-    setBookingForm((prev) => ({
-      ...prev,
-      doctorId: doc._id,
-      department: doc.department,
-    }));
-    loadSlots(doc._id, bookingForm.appointmentDate);
-  };
-
-  const loadSlots = async (docId, date) => {
+  const cancelAppointment = async (appointment) => {
+    const reason = window.prompt('Please tell reception why you need to cancel (optional):') || '';
     try {
-      setLoadingSlots(true);
-      const res = await appointmentService.getSlots(docId, date);
-      if (res.success) {
-        setAvailableSlots(res.data);
-        const firstAvail = res.data.find((s) => s.isAvailable);
-        if (firstAvail) {
-          setBookingForm((prev) => ({ ...prev, timeSlot: firstAvail.slot }));
-        }
-      }
+      const res = await patientPortalService.cancelAppointment({ id: appointment.id, reason });
+      toast.success(res?.message || 'Cancellation request sent.');
+      await loadAll();
     } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingSlots(false);
+      toast.error(err.message || 'Could not request cancellation.');
     }
   };
 
-  const handleBookingSubmit = async (e) => {
-    e.preventDefault();
-    if (!bookingForm.doctorId || !bookingForm.appointmentDate || !bookingForm.timeSlot || !bookingForm.reasonForVisit) {
-      return toast.warning('Please complete all booking fields');
-    }
-
+  const saveProfile = async (event) => {
+    event.preventDefault();
     try {
-      setSubmittingBooking(true);
-      const payload = {
-        ...bookingForm,
-        symptoms: bookingForm.symptoms
-          ? bookingForm.symptoms.split(',').map((s) => s.trim())
-          : [],
-      };
-
-      const res = await appointmentService.book(payload);
-      if (res.success) {
-        toast.success(res.message || 'Consultation appointment confirmed!');
-        setIsBookingOpen(false);
-        setBookingForm({
-          doctorId: '',
-          department: '',
-          appointmentDate: new Date().toISOString().split('T')[0],
-          timeSlot: '',
-          type: 'General Checkup',
-          reasonForVisit: '',
-          symptoms: '',
-        });
-        fetchPatientData();
-      }
+      setSavingProfile(true);
+      const payload = { ...profileForm };
+      if (!payload.phone) delete payload.phone;
+      const res = await patientPortalService.updateProfile(payload);
+      toast.success(res?.message || 'Profile updated.');
+      await loadAll();
     } catch (err) {
-      toast.error(err.message || 'Booking failed');
+      toast.error(err.message || 'Could not save your profile.');
     } finally {
-      setSubmittingBooking(false);
+      setSavingProfile(false);
     }
   };
 
-  const patientProfile = data?.patient || user?.patientProfile || {};
-  const metrics = data?.metrics || {};
+  const submitClinicalChange = async () => {
+    if (changeRequest.trim().length < 5) {
+      toast.warning('Please describe the correction you need.');
+      return;
+    }
+    try {
+      setSavingProfile(true);
+      const res = await patientPortalService.updateProfile({
+        medical_history: [{ event: 'Patient correction request', date: new Date().toISOString().slice(0, 10), notes: changeRequest.trim() }],
+      });
+      toast.success(res?.message || 'Sent to your care team for review.');
+      setChangeRequest('');
+    } catch (err) {
+      toast.error(err.message || 'Could not submit the correction.');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   return (
     <div>
-      {/* Patient Header Banner */}
       <section className="portal-hero">
-        <img className="portal-hero-photo" src="/images/private-room.webp" alt="" aria-hidden="true" />
         <div className="portal-hero-main">
-          <img
+          <div
             className="portal-hero-avatar"
-            src={user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200'}
-            alt="Patient avatar"
-          />
+            aria-hidden="true"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'var(--primary-100)',
+              color: 'var(--primary-700)',
+              fontSize: '1.5rem',
+              fontWeight: 700,
+            }}
+          >
+            {(patient.preferredName || user?.name || 'P').slice(0, 1).toUpperCase()}
+          </div>
           <div>
             <div className="portal-hero-meta">
               <span className="portal-status-pill">Patient</span>
               <span>
-                ID <strong>{patientProfile.patientId || 'PAT-1001'}</strong>
+                Patient no. <strong>{patient.patientNumber || '—'}</strong>
               </span>
             </div>
-            <h1 className="portal-hero-title">Welcome, {user?.name}</h1>
+            <h1 className="portal-hero-title">Welcome, {patient.preferredName || user?.name || 'there'}</h1>
             <p className="portal-hero-sub">
-              Blood group <strong style={{ color: 'var(--danger-600)' }}>{patientProfile.bloodGroup || 'O+'}</strong> •{' '}
-              {patientProfile.admissionStatus || 'Outpatient'} • {patientProfile.insuranceProvider || 'Self Pay'}
+              {patient.facility || 'Fidus Medical Center'}
+              {patient.bloodGroup ? ` • Blood group ${patient.bloodGroup}` : ''}
+              {patient.dateOfBirth ? ` • Born ${formatDate(patient.dateOfBirth)}` : ''}
             </p>
           </div>
         </div>
-
         <div className="portal-hero-actions">
           <button className="btn btn-primary" onClick={() => setIsBookingOpen(true)}>
-            <Calendar size={16} /> Book Appointment
+            <Calendar size={16} /> Request appointment
           </button>
-          <button className="btn btn-secondary" onClick={() => setIsTriageOpen(true)}>
-            <Stethoscope size={16} /> Symptom Checker
+          <button className="btn btn-secondary" onClick={loadAll} disabled={loading}>
+            <RefreshCw size={16} /> {loading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       </section>
 
-      {/* TAB 1: HEALTH OVERVIEW */}
+      {error && (
+        <div className="card" style={{ borderLeft: '4px solid var(--danger-500)' }}>
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">Records unavailable</h2>
+              <p className="card-subtitle">{error}</p>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={loadAll}>
+              <RefreshCw size={14} /> Retry
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Health overview                                                   */}
+      {/* ---------------------------------------------------------------- */}
       {currentTab === 'overview' && (
         <div>
           <div className="stats-grid">
             <StatCard
-              label="Consultation Visits"
-              value={appointments.length}
-              subtext="Total hospital visits"
+              label="Upcoming visits"
+              value={upcoming.length}
+              subtext="Requested or confirmed appointments"
               icon={Calendar}
               color="teal"
             />
             <StatCard
-              label="Active Prescriptions"
-              value={prescriptions.length}
-              subtext="Digital medications on file"
+              label="Active prescriptions"
+              value={metrics.activePrescriptions || 0}
+              subtext="Medication currently on file"
               icon={FileCheck}
               color="indigo"
             />
             <StatCard
-              label="Outstanding Bills"
-              value={`₹${metrics.pendingBalance || 0}`}
-              subtext={`${invoices.filter((i) => i.paymentStatus !== 'Paid').length} unpaid invoices`}
+              label="Outstanding balance"
+              value={money(metrics.outstandingBalance, metrics.currency)}
+              subtext={metrics.openInvoices ? `${metrics.openInvoices} open invoice(s)` : 'No open invoices'}
               icon={Receipt}
-              color={metrics.pendingBalance > 0 ? 'rose' : 'emerald'}
+              color={metrics.outstandingBalance > 0 ? 'rose' : 'emerald'}
             />
             <StatCard
-              label="Diagnostic Scans"
-              value={scans.length}
-              subtext="X-Rays & lab files"
+              label="Released reports"
+              value={(metrics.labReports || 0) + (metrics.imagingReports || 0)}
+              subtext="Laboratory and imaging reports"
               icon={FolderLock}
               color="blue"
             />
           </div>
 
           <div className="portal-two-col">
-            {/* Upcoming Appointments */}
             <div className="card">
               <div className="card-header">
                 <div>
-                  <h2 className="card-title">My Upcoming Visits</h2>
-                  <p className="card-subtitle">Scheduled doctor consultations</p>
+                  <h2 className="card-title">Upcoming appointments</h2>
+                  <p className="card-subtitle">Confirmed and requested visits</p>
                 </div>
-                <div className="portal-row-actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => setCurrentTab('appointments')}>
-                    View all
-                  </button>
-                  <button className="btn btn-outline-primary btn-sm" onClick={() => setIsBookingOpen(true)}>
-                    <Plus size={14} /> Book
-                  </button>
-                </div>
-              </div>
-
-              <div className="table-container">
-                <table className="custom-table">
-                  <thead>
-                    <tr>
-                      <th>Doctor</th>
-                      <th>Date / Slot</th>
-                      <th>Token</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {appointments.length === 0 ? (
-                      <tr>
-                        <td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: 'var(--slate-500)' }}>
-                          No upcoming appointments. Click Book New to schedule a consultation.
-                        </td>
-                      </tr>
-                    ) : (
-                      appointments.map((app) => (
-                        <tr key={app._id}>
-                          <td>
-                            <strong>{app.doctor?.user?.name || 'Doctor'}</strong>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--primary-600)' }}>{app.department}</div>
-                          </td>
-                          <td>
-                            <div>{new Date(app.appointmentDate).toLocaleDateString()}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)' }}>{app.timeSlot}</div>
-                          </td>
-                          <td>
-                            <strong style={{ color: 'var(--primary-700)' }}>#{app.tokenNumber}</strong>
-                          </td>
-                          <td>
-                            <StatusBadge status={app.status} />
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Active Prescriptions */}
-            <div className="card">
-              <div className="card-header">
-                <div>
-                  <h2 className="card-title">My Prescriptions</h2>
-                  <p className="card-subtitle">Digital dosage & doctor advice</p>
-                </div>
-                <button className="btn btn-secondary btn-sm" onClick={() => setCurrentTab('prescriptions')}>
+                <button className="btn btn-secondary btn-sm" onClick={() => setCurrentTab('appointments')}>
                   View all
                 </button>
               </div>
-
-              <div className="table-container">
-                <table className="custom-table">
-                  <thead>
-                    <tr>
-                      <th>RX ID</th>
-                      <th>Doctor</th>
-                      <th>Diagnosis</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {prescriptions.length === 0 ? (
+              {loading ? (
+                <Skeleton />
+              ) : overview?.upcomingAppointments?.length ? (
+                <div className="table-container">
+                  <table className="custom-table">
+                    <thead>
                       <tr>
-                        <td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: 'var(--slate-500)' }}>
-                          No prescriptions on record.
-                        </td>
+                        <th>When</th>
+                        <th>Department</th>
+                        <th>Clinician</th>
+                        <th>Status</th>
                       </tr>
-                    ) : (
-                      prescriptions.map((rx) => (
-                        <tr key={rx._id}>
+                    </thead>
+                    <tbody>
+                      {overview.upcomingAppointments.map((appt) => (
+                        <tr key={appt.id}>
+                          <td>{formatDateTime(appt.scheduled_at)}</td>
+                          <td>{appt.department}</td>
+                          <td>{appt.clinician_name || 'To be assigned'}</td>
                           <td>
-                            <strong style={{ color: 'var(--primary-700)' }}>{rx.prescriptionId}</strong>
-                          </td>
-                          <td>{rx.doctor?.user?.name}</td>
-                          <td style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {rx.diagnosis}
-                          </td>
-                          <td>
-                            <button
-                              className="btn btn-outline-primary btn-sm"
-                              onClick={() => setSelectedRx(rx)}
-                            >
-                              <Printer size={13} /> View RX
-                            </button>
+                            <StatusBadge status={appt.status} />
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Calendar}
+                  title="No upcoming appointments"
+                  description="When reception confirms a visit it will appear here."
+                  action={
+                    <button className="btn btn-primary btn-sm" style={{ marginTop: '0.75rem' }} onClick={() => setIsBookingOpen(true)}>
+                      <Plus size={14} /> Request appointment
+                    </button>
+                  }
+                />
+              )}
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Health information</h2>
+                  <p className="card-subtitle">Recorded by your care team</p>
+                </div>
               </div>
+              {loading ? (
+                <Skeleton rows={2} />
+              ) : health.allergies?.length || health.conditions?.length ? (
+                <div style={{ padding: '0 1rem 1rem' }}>
+                  <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Allergies</h3>
+                  {health.allergies?.length ? (
+                    <ul style={{ margin: '0.25rem 0 0.75rem 1rem' }}>
+                      {health.allergies.map((allergy) => (
+                        <li key={String(allergy)} style={{ color: 'var(--danger-600)' }}>
+                          <AlertTriangle size={12} /> {String(allergy)}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ color: 'var(--slate-500)', fontSize: '0.85rem' }}>No allergies recorded.</p>
+                  )}
+                  <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Conditions</h3>
+                  {health.conditions?.length ? (
+                    <ul style={{ margin: '0.25rem 0 0 1rem' }}>
+                      {health.conditions.map((condition, index) => (
+                        <li key={index}>{condition?.name || String(condition)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ color: 'var(--slate-500)', fontSize: '0.85rem' }}>No conditions recorded.</p>
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Shield}
+                  title="No clinical summary yet"
+                  description="Allergies, conditions and care plans appear here once a clinician records them. This is not the same as having no conditions."
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="portal-two-col">
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Recent activity</h2>
+                  <p className="card-subtitle">Everything that changed on your record</p>
+                </div>
+              </div>
+              {loading ? (
+                <Skeleton rows={4} />
+              ) : overview?.activity?.length ? (
+                <ul style={{ listStyle: 'none', padding: '0 1rem 1rem', margin: 0 }}>
+                  {overview.activity.map((item) => (
+                    <li key={item.id} style={{ display: 'flex', gap: '0.75rem', padding: '0.6rem 0', borderBottom: '1px solid var(--slate-100)' }}>
+                      <Clock size={16} style={{ color: 'var(--primary-500)', marginTop: 2 }} />
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{item.title}</div>
+                        {item.body && <div style={{ fontSize: '0.8rem', color: 'var(--slate-600)' }}>{item.body}</div>}
+                        <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)' }}>
+                          {formatDateTime(item.created_at)}
+                          {item.actor_name ? ` • ${item.actor_name}` : ''}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState icon={Clock} title="No activity yet" description="Appointments, prescriptions and results will show up here." />
+              )}
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Recently released reports</h2>
+                  <p className="card-subtitle">Verified and released by the facility</p>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={() => setCurrentTab('reports')}>
+                  View all
+                </button>
+              </div>
+              {loading ? (
+                <Skeleton rows={2} />
+              ) : overview?.recentReports?.length ? (
+                <div className="table-container">
+                  <table className="custom-table">
+                    <thead>
+                      <tr>
+                        <th>Report</th>
+                        <th>Type</th>
+                        <th>Released</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overview.recentReports.map((report) => (
+                        <tr key={report.id}>
+                          <td>{report.title}</td>
+                          <td>{report.kind === 'lab' ? 'Laboratory' : 'Imaging'}</td>
+                          <td>{formatDate(report.available_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState icon={FolderLock} title="No released reports" description="Results appear here after a clinician releases them." />
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* TAB 2: MY APPOINTMENTS */}
+      {/* ---------------------------------------------------------------- */}
+      {/* Appointments                                                      */}
+      {/* ---------------------------------------------------------------- */}
       {currentTab === 'appointments' && (
         <div className="card">
           <div className="card-header">
             <div>
-              <h2 className="card-title">My Appointment History & Upcoming Visits</h2>
-              <p className="card-subtitle">Track queue tokens and consultation history</p>
+              <h2 className="card-title">My appointments</h2>
+              <p className="card-subtitle">Requests, confirmations, reschedules and history</p>
             </div>
-            <button className="btn btn-primary" onClick={() => setIsBookingOpen(true)}>
-              <Plus size={16} /> Book New Visit
-            </button>
+            <div className="portal-row-actions">
+              <select
+                className="form-control"
+                value={appointmentFilter}
+                onChange={(event) => setAppointmentFilter(event.target.value)}
+                aria-label="Filter appointments"
+              >
+                <option value="all">All</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="past">Past</option>
+              </select>
+              <button className="btn btn-primary" onClick={() => setIsBookingOpen(true)}>
+                <Plus size={16} /> Request appointment
+              </button>
+            </div>
           </div>
 
-          <div className="table-container">
-            <table className="custom-table">
-              <thead>
-                <tr>
-                  <th>Appt #</th>
-                  <th>Specialist Doctor</th>
-                  <th>Date</th>
-                  <th>Time Slot</th>
-                  <th>Token</th>
-                  <th>Reason</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {appointments.length === 0 && (
+          {loading ? (
+            <Skeleton rows={5} />
+          ) : appointments.length === 0 ? (
+            <EmptyState
+              icon={Calendar}
+              title="No appointments yet"
+              description="Request a visit and reception will confirm a time with you."
+              action={
+                <button className="btn btn-primary btn-sm" style={{ marginTop: '0.75rem' }} onClick={() => setIsBookingOpen(true)}>
+                  Request appointment
+                </button>
+              }
+            />
+          ) : (
+            <div className="table-container">
+              <table className="custom-table">
+                <thead>
                   <tr>
-                    <td colSpan="8" className="portal-empty-cell">
-                      No appointments yet. Book a visit to get started.
-                    </td>
+                    <th>Reference</th>
+                    <th>When</th>
+                    <th>Department</th>
+                    <th>Clinician</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Actions</th>
                   </tr>
-                )}
-                {appointments.map((app) => (
-                  <tr key={app._id}>
-                    <td><strong>{app.appointmentNumber}</strong></td>
-                    <td>
-                      <strong>{app.doctor?.user?.name}</strong>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--primary-600)' }}>{app.department}</div>
-                    </td>
-                    <td>{new Date(app.appointmentDate).toLocaleDateString()}</td>
-                    <td>{app.timeSlot}</td>
-                    <td>
-                      <span className="portal-token">#{app.tokenNumber}</span>
-                    </td>
-                    <td>{app.reasonForVisit}</td>
-                    <td>
-                      <StatusBadge status={app.status} />
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-outline-primary btn-sm"
-                        onClick={() => {
-                          setTelehealthDoc(app.doctor?.user);
-                          setIsTelehealthOpen(true);
-                        }}
-                        title="Join Virtual Video Consultation"
-                      >
-                        <Video size={13} /> Join Video
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {appointments.map((appt) => (
+                    <tr key={appt.id}>
+                      <td>
+                        <strong>{appt.reference}</strong>
+                      </td>
+                      <td>{formatDateTime(appt.scheduled_at)}</td>
+                      <td>{appt.department}</td>
+                      <td>{appt.clinician_name || 'To be assigned'}</td>
+                      <td style={{ maxWidth: 220 }}>{appt.reason || '—'}</td>
+                      <td>
+                        <StatusBadge status={appt.status} />
+                      </td>
+                      <td>
+                        {['requested', 'confirmed', 'rescheduled'].includes(appt.status) && (
+                          <button className="btn btn-outline-primary btn-sm" onClick={() => cancelAppointment(appt)}>
+                            Request cancellation
+                          </button>
+                        )}
+                        {appt.instructions && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: 4 }}>{appt.instructions}</div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB 3: PRESCRIPTIONS */}
+      {/* ---------------------------------------------------------------- */}
+      {/* Prescriptions                                                     */}
+      {/* ---------------------------------------------------------------- */}
       {currentTab === 'prescriptions' && (
         <div className="card">
           <div className="card-header">
             <div>
-              <h2 className="card-title">My Official Digital Prescriptions</h2>
-              <p className="card-subtitle">Review medications, dosages, dietary plans, and follow-up schedules</p>
+              <h2 className="card-title">My prescriptions</h2>
+              <p className="card-subtitle">Issued by your clinicians — instructions cannot be edited here</p>
             </div>
           </div>
-
-          <div className="table-container">
-            <table className="custom-table">
-              <thead>
-                <tr>
-                  <th>RX Number</th>
-                  <th>Attending Physician</th>
-                  <th>Diagnosis</th>
-                  <th>Medications Prescribed</th>
-                  <th>Date Issued</th>
-                  <th>Official Document</th>
-                </tr>
-              </thead>
-              <tbody>
-                {prescriptions.length === 0 && (
+          {loading ? (
+            <Skeleton rows={4} />
+          ) : prescriptions.length === 0 ? (
+            <EmptyState icon={FileCheck} title="No prescriptions yet" description="Prescriptions issued by a clinician appear here automatically." />
+          ) : (
+            <div className="table-container">
+              <table className="custom-table">
+                <thead>
                   <tr>
-                    <td colSpan="6" className="portal-empty-cell">
-                      No prescriptions on record.
-                    </td>
+                    <th>Reference</th>
+                    <th>Medication</th>
+                    <th>Dosage</th>
+                    <th>Issued by</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th></th>
                   </tr>
-                )}
-                {prescriptions.map((rx) => (
-                  <tr key={rx._id}>
-                    <td><strong style={{ color: 'var(--primary-700)' }}>{rx.prescriptionId}</strong></td>
-                    <td>{rx.doctor?.user?.name}</td>
-                    <td><strong>{rx.diagnosis}</strong></td>
-                    <td>
-                      {rx.medicines?.map((m) => `${m.name} (${m.dosage})`).join(', ')}
-                    </td>
-                    <td>{new Date(rx.createdAt).toLocaleDateString()}</td>
-                    <td>
-                      <button className="btn btn-secondary btn-sm" onClick={() => setSelectedRx(rx)}>
-                        <Printer size={13} /> View / Print RX
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {prescriptions.map((rx) => (
+                    <tr key={rx.id}>
+                      <td>
+                        <strong style={{ color: 'var(--primary-700)' }}>{rx.reference}</strong>
+                      </td>
+                      <td>
+                        {rx.medication}
+                        {rx.strength ? ` ${rx.strength}` : ''}
+                      </td>
+                      <td>{[rx.dosage, rx.frequency, rx.duration].filter(Boolean).join(' • ') || '—'}</td>
+                      <td>{rx.clinician_name || '—'}</td>
+                      <td>{formatDate(rx.created_at)}</td>
+                      <td>
+                        <StatusBadge status={rx.status} />
+                      </td>
+                      <td>
+                        <button className="btn btn-outline-primary btn-sm" onClick={() => setSelectedRx(rx)}>
+                          <Printer size={13} /> View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB 4: LAB REPORTS & SCANS */}
+      {/* ---------------------------------------------------------------- */}
+      {/* Lab reports and scans                                             */}
+      {/* ---------------------------------------------------------------- */}
       {currentTab === 'reports' && (
         <div>
-          <div className="card portal-section-head">
-            <div>
-              <h2 className="card-title">My Diagnostic Scans & Laboratory Reports</h2>
-              <p className="card-subtitle">Encrypted cloud imaging vault and pathology biomarker panels</p>
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">Laboratory results</h2>
+                <p className="card-subtitle">Values appear only once a laboratory scientist releases them</p>
+              </div>
             </div>
-            <button className="btn btn-primary" onClick={() => setIsPathologyOpen(true)}>
-              <Microscope size={16} /> View Lab Report
-            </button>
+            {loading ? (
+              <Skeleton rows={3} />
+            ) : reports.lab.length === 0 ? (
+              <EmptyState icon={Microscope} title="No laboratory reports yet" description="When your clinician requests a test it will be tracked here." />
+            ) : (
+              <div className="table-container">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Reference</th>
+                      <th>Test</th>
+                      <th>Requested</th>
+                      <th>Status</th>
+                      <th>Report</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.lab.map((report) => (
+                      <tr key={report.id}>
+                        <td>{report.reference}</td>
+                        <td>{report.test_name}</td>
+                        <td>{formatDate(report.requested_at)}</td>
+                        <td>
+                          <StatusBadge status={report.status} />
+                          {!report.released && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: 4 }}>{report.pendingReason}</div>
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={() => setSelectedLab(report)}
+                            disabled={!report.released}
+                          >
+                            {report.released ? 'View results' : 'Awaiting release'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
-          {scans.length === 0 && (
-            <div className="card portal-empty-card">No diagnostic scans uploaded yet.</div>
-          )}
-
-          <div className="files-grid">
-            {scans.length === 0 ? null : (
-              scans.map((file) => (
-                <div key={file._id} className="file-card">
-                  <div className="file-card-preview" onClick={() => setViewScan(file)} style={{ cursor: 'pointer' }}>
-                    <img src={file.fileUrl} alt={file.title} />
-                    <span className="portal-file-tag">{file.category}</span>
-                  </div>
-
-                  <div className="file-card-details">
-                    <div style={{ fontWeight: '700', fontSize: '0.9375rem', color: 'var(--slate-900)' }}>{file.title}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)' }}>
-                      Date: {new Date(file.createdAt).toLocaleDateString()}
-                    </div>
-                    {file.notes && <p style={{ fontSize: '0.75rem', color: 'var(--slate-600)', marginTop: '0.25rem' }}>{file.notes}</p>}
-                    <button
-                      className="btn btn-outline-primary btn-sm"
-                      style={{ marginTop: '0.75rem' }}
-                      onClick={() => setViewScan(file)}
-                    >
-                      <Eye size={13} /> View Full Report
-                    </button>
-                  </div>
-                </div>
-              ))
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">Scans and imaging</h2>
+                <p className="card-subtitle">Examination completion is not the same as a released report</p>
+              </div>
+            </div>
+            {loading ? (
+              <Skeleton rows={3} />
+            ) : reports.imaging.length === 0 ? (
+              <EmptyState icon={ScanLine} title="No imaging records yet" description="Requested scans and released reports will appear here." />
+            ) : (
+              <div className="table-container">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Reference</th>
+                      <th>Examination</th>
+                      <th>Requested</th>
+                      <th>Status</th>
+                      <th>Report</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.imaging.map((report) => (
+                      <tr key={report.id}>
+                        <td>{report.reference}</td>
+                        <td>
+                          {report.exam_name}
+                          {report.modality ? ` (${report.modality})` : ''}
+                        </td>
+                        <td>{formatDate(report.requested_at)}</td>
+                        <td>
+                          <StatusBadge status={report.status} />
+                          {!report.released && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: 4 }}>{report.pendingReason}</div>
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={() => setSelectedImaging(report)}
+                            disabled={!report.released}
+                          >
+                            {report.released ? 'View report' : 'Awaiting release'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* TAB 5: BILLING & INVOICES */}
+      {/* ---------------------------------------------------------------- */}
+      {/* Invoices                                                          */}
+      {/* ---------------------------------------------------------------- */}
       {currentTab === 'billing' && (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">My Invoices & Payment Ledger</h2>
-              <p className="card-subtitle">Itemized hospital charges and official tax receipts</p>
-            </div>
+        <div>
+          <div className="stats-grid">
+            <StatCard label="Outstanding balance" value={money(invoices.outstanding, invoices.currency)} subtext="Across open invoices" icon={Receipt} color={invoices.outstanding > 0 ? 'rose' : 'emerald'} />
+            <StatCard label="Invoices" value={invoices.items.length} subtext="All invoices on file" icon={FileCheck} color="indigo" />
+            <StatCard
+              label="Paid to date"
+              value={money(invoices.items.reduce((sum, invoice) => sum + Number(invoice.amount_paid || 0), 0), invoices.currency)}
+              subtext="Verified payments only"
+              icon={CheckCircle}
+              color="teal"
+            />
           </div>
 
-          <div className="table-container">
-            <table className="custom-table">
-              <thead>
-                <tr>
-                  <th>Invoice #</th>
-                  <th>Issue Date</th>
-                  <th>Total Amount</th>
-                  <th>Paid Amount</th>
-                  <th>Balance Due</th>
-                  <th>Status</th>
-                  <th>Receipt</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.length === 0 && (
-                  <tr>
-                    <td colSpan="7" className="portal-empty-cell">
-                      No invoices yet.
-                    </td>
-                  </tr>
-                )}
-                {invoices.map((inv) => (
-                  <tr key={inv._id}>
-                    <td><strong style={{ color: 'var(--primary-700)' }}>{inv.invoiceNumber}</strong></td>
-                    <td>{new Date(inv.issueDate).toLocaleDateString()}</td>
-                    <td><strong>₹{inv.totalAmount}</strong></td>
-                    <td style={{ color: '#059669', fontWeight: '700' }}>₹{inv.paidAmount}</td>
-                    <td style={{ color: inv.balanceAmount > 0 ? '#dc2626' : '#059669', fontWeight: '800' }}>
-                      ₹{inv.balanceAmount}
-                    </td>
-                    <td>
-                      <StatusBadge status={inv.paymentStatus} />
-                    </td>
-                    <td>
-                      <button className="btn btn-secondary btn-sm" onClick={() => setSelectedInvoice(inv)}>
-                        <Printer size={13} /> View Receipt
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">My invoices</h2>
+                <p className="card-subtitle">Bills issued by the facility</p>
+              </div>
+            </div>
+            {loading ? (
+              <Skeleton rows={3} />
+            ) : invoices.items.length === 0 ? (
+              <EmptyState icon={Receipt} title="No invoices yet" description="Invoices issued by the billing desk appear here." />
+            ) : (
+              <div className="table-container">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Invoice</th>
+                      <th>Issued</th>
+                      <th>Service</th>
+                      <th>Total</th>
+                      <th>Paid</th>
+                      <th>Balance</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoices.items.map((invoice) => (
+                      <tr key={invoice.id}>
+                        <td>
+                          <strong>{invoice.number}</strong>
+                        </td>
+                        <td>{formatDate(invoice.issued_at)}</td>
+                        <td>{invoice.service || 'Medical services'}</td>
+                        <td>{money(invoice.total, invoice.currency)}</td>
+                        <td>{money(invoice.amount_paid, invoice.currency)}</td>
+                        <td>{money(invoice.outstanding, invoice.currency)}</td>
+                        <td>
+                          <StatusBadge status={invoice.status} />
+                        </td>
+                        <td>
+                          <button className="btn btn-outline-primary btn-sm" onClick={() => setSelectedInvoice(invoice)}>
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* TAB 6: MEDICAL PROFILE */}
+      {/* ---------------------------------------------------------------- */}
+      {/* Medical profile                                                   */}
+      {/* ---------------------------------------------------------------- */}
       {currentTab === 'profile' && (
         <div className="portal-two-col">
           <div className="card">
             <div className="card-header">
               <div>
-                <h2 className="card-title">Personal Details</h2>
-                <p className="card-subtitle">Your demographic and contact information</p>
+                <h2 className="card-title">Personal information</h2>
+                <p className="card-subtitle">You can update these contact details</p>
               </div>
-              <User size={18} color="var(--primary-600)" />
             </div>
-            <dl className="portal-info-list">
-              <div><dt>Full name</dt><dd>{user?.name}</dd></div>
-              <div><dt>Patient ID</dt><dd>{patientProfile.patientId || 'PAT-1001'}</dd></div>
-              <div><dt>Age / Gender</dt><dd>{patientProfile.age || 34}y ({patientProfile.gender || 'Male'})</dd></div>
-              <div><dt>Blood group</dt><dd><span className="portal-tag portal-tag-red">{patientProfile.bloodGroup || 'O+'}</span></dd></div>
-              <div><dt>Phone</dt><dd>{patientProfile.phone || user?.phone}</dd></div>
-              <div><dt>Email</dt><dd>{user?.email}</dd></div>
-              <div><dt>Address</dt><dd>{patientProfile.address || '42 Pine Valley Rd, Seattle, WA'}</dd></div>
-            </dl>
+            {loading ? (
+              <Skeleton rows={4} />
+            ) : (
+              <form onSubmit={saveProfile} style={{ padding: '0 1rem 1rem', display: 'grid', gap: '0.75rem' }}>
+                <label>
+                  Full name
+                  <input className="form-control" value={profile?.personal?.name || ''} disabled />
+                </label>
+                <label>
+                  Patient number
+                  <input className="form-control" value={profile?.personal?.patientNumber || ''} disabled />
+                </label>
+                <label>
+                  Date of birth
+                  <input className="form-control" value={formatDate(profile?.personal?.dateOfBirth)} disabled />
+                </label>
+                <label>
+                  Preferred name
+                  <input
+                    className="form-control"
+                    value={profileForm.preferred_name}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, preferred_name: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Phone
+                  <input
+                    className="form-control"
+                    value={profileForm.phone}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, phone: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Address
+                  <input
+                    className="form-control"
+                    value={profileForm.address}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, address: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  City / district
+                  <input
+                    className="form-control"
+                    value={profileForm.city}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, city: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Emergency contact name
+                  <input
+                    className="form-control"
+                    value={profileForm.emergency_contact_name}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, emergency_contact_name: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Emergency contact phone
+                  <input
+                    className="form-control"
+                    value={profileForm.emergency_contact_phone}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, emergency_contact_phone: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Insurance provider
+                  <input
+                    className="form-control"
+                    value={profileForm.insurance_provider}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, insurance_provider: event.target.value }))}
+                  />
+                </label>
+                <button type="submit" className="btn btn-primary" disabled={savingProfile}>
+                  {savingProfile ? 'Saving…' : 'Save contact details'}
+                </button>
+              </form>
+            )}
           </div>
 
-          <div className="card">
-            <div className="card-header">
-              <div>
-                <h2 className="card-title">Emergency & Insurance</h2>
-                <p className="card-subtitle">Contacts, coverage and medical alerts</p>
+          <div>
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Clinical record</h2>
+                  <p className="card-subtitle">Maintained by your clinicians — read only</p>
+                </div>
               </div>
-              <Shield size={18} color="var(--primary-600)" />
+              {loading ? (
+                <Skeleton rows={3} />
+              ) : (
+                <div style={{ padding: '0 1rem 1rem' }}>
+                  <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Allergies</h3>
+                  <p style={{ fontSize: '0.9rem' }}>
+                    {profile?.clinical?.allergies?.length ? profile.clinical.allergies.join(', ') : 'None recorded'}
+                  </p>
+                  <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Conditions</h3>
+                  <p style={{ fontSize: '0.9rem' }}>
+                    {profile?.clinical?.conditions?.length
+                      ? profile.clinical.conditions.map((condition) => condition?.name || String(condition)).join(', ')
+                      : 'None recorded'}
+                  </p>
+                  <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Care plan</h3>
+                  <p style={{ fontSize: '0.9rem' }}>{profile?.clinical?.carePlan || 'No care plan on file.'}</p>
+
+                  <label style={{ display: 'block', marginTop: '1rem' }}>
+                    Request a correction
+                    <textarea
+                      className="form-control"
+                      rows={3}
+                      value={changeRequest}
+                      placeholder="Describe anything in your clinical record that needs correcting."
+                      onChange={(event) => setChangeRequest(event.target.value)}
+                    />
+                  </label>
+                  <button className="btn btn-secondary btn-sm" onClick={submitClinicalChange} disabled={savingProfile}>
+                    Send for review
+                  </button>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: '0.5rem' }}>
+                    Clinical records are reviewed by your care team; your request will not change the record directly.
+                  </p>
+                </div>
+              )}
             </div>
-            <dl className="portal-info-list">
-              <div>
-                <dt>Emergency contact</dt>
-                <dd>{patientProfile.emergencyContact?.name || 'Claire Johnson'} ({patientProfile.emergencyContact?.relation || 'Spouse'})</dd>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Consultation history</h2>
+                  <p className="card-subtitle">Summaries written by your clinicians</p>
+                </div>
               </div>
-              <div><dt>Emergency phone</dt><dd>{patientProfile.emergencyContact?.phone || '+1 (555) 301-8822'}</dd></div>
-              <div><dt>Insurance carrier</dt><dd>{patientProfile.insuranceProvider || 'BlueCross Health Guard'}</dd></div>
-              <div><dt>Policy number</dt><dd>{patientProfile.policyNumber || 'BC-992182-01'}</dd></div>
-              <div>
-                <dt>Allergies</dt>
-                <dd>
-                  <span className="portal-tag portal-tag-amber">
-                    <AlertTriangle size={12} /> {patientProfile.allergies?.join(', ') || 'Penicillin, Peanuts'}
-                  </span>
-                </dd>
-              </div>
-              <div><dt>Chronic conditions</dt><dd>{patientProfile.chronicConditions?.join(', ') || 'Mild Asthma'}</dd></div>
-            </dl>
+              {loading ? (
+                <Skeleton rows={2} />
+              ) : profile?.consultations?.length ? (
+                <ul style={{ listStyle: 'none', padding: '0 1rem 1rem', margin: 0 }}>
+                  {profile.consultations.map((consultation) => (
+                    <li key={consultation.id} style={{ padding: '0.6rem 0', borderBottom: '1px solid var(--slate-100)' }}>
+                      <div style={{ fontWeight: 600 }}>
+                        {formatDate(consultation.created_at)} • {consultation.clinician_name || 'Clinician'}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--slate-600)' }}>{consultation.diagnosis || 'No diagnosis recorded'}</div>
+                      {consultation.treatment_plan && (
+                        <div style={{ fontSize: '0.8rem', color: 'var(--slate-500)' }}>{consultation.treatment_plan}</div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState icon={User} title="No consultations yet" description="Consultation summaries appear after a clinician completes a visit." />
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Book Specialist Modal */}
-      <Modal
-        isOpen={isBookingOpen}
-        onClose={() => setIsBookingOpen(false)}
-        title="Book Specialist Doctor Consultation"
-        maxWidth="760px"
-      >
-        <form onSubmit={handleBookingSubmit}>
-          <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-            <label className="form-label" style={{ fontSize: '0.85rem', fontWeight: '700' }}>
-              Step 1: Choose Specialist Doctor *
+      {/* ---------------------------------------------------------------- */}
+      {/* Modals                                                            */}
+      {/* ---------------------------------------------------------------- */}
+      {isBookingOpen && (
+        <Modal isOpen title="Request an appointment" onClose={() => setIsBookingOpen(false)}>
+          <form onSubmit={submitBooking} style={{ display: 'grid', gap: '0.75rem' }}>
+            <label>
+              Department
+              <select
+                className="form-control"
+                value={booking.department}
+                onChange={(event) => setBooking((prev) => ({ ...prev, department: event.target.value }))}
+              >
+                {DEPARTMENTS.map((department) => (
+                  <option key={department} value={department}>
+                    {department}
+                  </option>
+                ))}
+              </select>
             </label>
-            <div className="portal-doctor-picker">
-              {doctors.map((doc) => {
-                const isSelected = bookingForm.doctorId === doc._id;
-                return (
-                  <button
-                    type="button"
-                    key={doc._id}
-                    onClick={() => handleDoctorPick(doc)}
-                    className={`clinical-option${isSelected ? ' is-selected' : ''}`}
-                    style={{ alignItems: 'center' }}
-                  >
-                    <img
-                      src={doc.user?.avatar || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=100'}
-                      alt=""
-                      style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
-                    />
-                    <div>
-                      <div style={{ fontWeight: '700', fontSize: '0.85rem', color: 'var(--slate-900)' }}>{doc.user?.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--primary-600)' }}>{doc.specialty}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--success-700)', fontWeight: '700' }}>₹{doc.consultationFee} fee</div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="form-row" style={{ marginBottom: '1.25rem' }}>
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '0.85rem', fontWeight: '700' }}>
-                Step 2: Consultation Date *
-              </label>
+            <label>
+              Visit type
+              <select
+                className="form-control"
+                value={booking.appointmentType}
+                onChange={(event) => setBooking((prev) => ({ ...prev, appointmentType: event.target.value }))}
+              >
+                {['Consultation', 'Follow-up', 'Review', 'Vaccination', 'Antenatal'].map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Preferred date
               <input
                 type="date"
-                className="form-input"
-                required
-                min={new Date().toISOString().split('T')[0]}
-                value={bookingForm.appointmentDate}
-                onChange={(e) => {
-                  setBookingForm({ ...bookingForm, appointmentDate: e.target.value });
-                  if (bookingForm.doctorId) loadSlots(bookingForm.doctorId, e.target.value);
-                }}
+                className="form-control"
+                min={new Date().toISOString().slice(0, 10)}
+                value={booking.scheduledAt}
+                onChange={(event) => setBooking((prev) => ({ ...prev, scheduledAt: event.target.value }))}
               />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '0.85rem', fontWeight: '700' }}>
-                Consultation Category
-              </label>
-              <select
-                className="form-select"
-                value={bookingForm.type}
-                onChange={(e) => setBookingForm({ ...bookingForm, type: e.target.value })}
-              >
-                <option value="General Checkup">General Checkup</option>
-                <option value="Specialist Consultation">Specialist Consultation</option>
-                <option value="Follow-up">Follow-up Review</option>
-                <option value="Emergency">Emergency Triage</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-            <label className="form-label" style={{ fontSize: '0.85rem', fontWeight: '700' }}>
-              Step 3: Available Time Slot *
             </label>
-            {loadingSlots ? (
-              <p style={{ fontSize: '0.8125rem', color: 'var(--primary-600)' }}>Checking doctor availability...</p>
-            ) : !bookingForm.doctorId ? (
-              <div
-                style={{
-                  fontSize: '0.8125rem',
-                  color: 'var(--slate-600)',
-                  backgroundColor: '#f8fafc',
-                  border: '1px dashed #cbd5e1',
-                  padding: '0.85rem',
-                  borderRadius: '10px',
-                  textAlign: 'center',
-                }}
-              >
-                Choose a doctor above to see available time slots.
-              </div>
-            ) : availableSlots.length === 0 ? (
-              <p style={{ fontSize: '0.8125rem', color: '#dc2626' }}>No slots available on this date. Please pick another consultation date.</p>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.5rem' }}>
-                {availableSlots.map((s) => {
-                  const isSelected = bookingForm.timeSlot === s.slot;
-                  return (
-                    <button
-                      key={s.slot}
-                      type="button"
-                      disabled={!s.isAvailable}
-                      onClick={() => setBookingForm({ ...bookingForm, timeSlot: s.slot })}
-                      style={{
-                        padding: '0.55rem 0.6rem',
-                        borderRadius: '10px',
-                        fontSize: '0.78rem',
-                        fontWeight: '700',
-                        border: isSelected ? '2px solid #0891b2' : '1px solid #e2e8f0',
-                        backgroundColor: isSelected ? '#ecfeff' : s.isAvailable ? '#ffffff' : '#f1f5f9',
-                        color: isSelected ? 'var(--primary-700)' : s.isAvailable ? 'var(--slate-900)' : 'var(--slate-500)',
-                        cursor: s.isAvailable ? 'pointer' : 'not-allowed',
-                        textAlign: 'center',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: '2px',
-                      }}
-                    >
-                      <span>{s.slot}</span>
-                      <span style={{ fontSize: '0.7rem', opacity: 0.85, fontWeight: '600' }}>
-                        {s.isAvailable ? (isSelected ? 'Selected' : 'Available') : 'Booked'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Quick Symptoms Preset Chips */}
-          <div style={{ marginBottom: '1.25rem' }}>
-            <div className="clinical-section-label">Quick add symptoms</div>
-            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-              {['Headache & Migraine', 'Fever & Chills', 'Chest Discomfort', 'Knee & Joint Pain', 'Persistent Cough', 'Routine Checkup'].map((chip) => (
-                <button
-                  key={chip}
-                  type="button"
-                  onClick={() => {
-                    const existing = bookingForm.reasonForVisit ? bookingForm.reasonForVisit + ', ' : '';
-                    setBookingForm((prev) => ({
-                      ...prev,
-                      reasonForVisit: existing + chip,
-                    }));
-                  }}
-                  className="portal-chip"
-                >
-                  + {chip}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-            <label className="form-label" style={{ fontSize: '0.85rem', fontWeight: '700' }}>
-              Reason for Consultation *
+            <label>
+              Preferred time
+              <input
+                type="time"
+                className="form-control"
+                value={booking.time}
+                onChange={(event) => setBooking((prev) => ({ ...prev, time: event.target.value }))}
+              />
             </label>
-            <textarea
-              className="form-textarea"
-              rows="2"
-              required
-              placeholder="Describe your health symptoms, pain level, or medical questions..."
-              value={bookingForm.reasonForVisit}
-              onChange={(e) => setBookingForm({ ...bookingForm, reasonForVisit: e.target.value })}
-            />
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              flexWrap: 'wrap',
-              gap: '0.75rem',
-              borderTop: '1px solid var(--slate-200)',
-              paddingTop: '1.25rem',
-            }}
-          >
-            <button type="button" className="btn btn-secondary" onClick={() => setIsBookingOpen(false)}>
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submittingBooking}
-              style={{ minWidth: '160px', justifyContent: 'center' }}
-            >
-              {submittingBooking ? 'Confirming booking...' : 'Confirm Appointment'}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* RX Modal */}
-      <Modal
-        isOpen={!!selectedRx}
-        onClose={() => setSelectedRx(null)}
-        title="Official Medical Prescription"
-        maxWidth="800px"
-      >
-        {selectedRx && (
-          <div>
-            <div className="rx-document">
-              <div className="rx-header">
-                <div>
-                  <div className="rx-hospital-title">CarePulse Hospital</div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--slate-500)' }}>100 Clinical Way • Tel: +1 (555) 010-9000</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: '800', color: 'var(--primary-700)' }}>{selectedRx.prescriptionId}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)' }}>{new Date(selectedRx.createdAt).toLocaleDateString()}</div>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <strong>Diagnosis:</strong> <span>{selectedRx.diagnosis}</span>
-              </div>
-
-              <div className="rx-symbol">℞</div>
-
-              <div className="portal-table-scroll">
-              <table className="rx-medicines-table">
-                <thead>
-                  <tr>
-                    <th>Medicine</th>
-                    <th>Dosage</th>
-                    <th>Frequency</th>
-                    <th>Duration</th>
-                    <th>Instructions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedRx.medicines?.map((m, i) => (
-                    <tr key={i}>
-                      <td><strong>{m.name}</strong></td>
-                      <td>{m.dosage}</td>
-                      <td>{m.frequency}</td>
-                      <td>{m.duration}</td>
-                      <td>{m.instructions}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-
-              {selectedRx.dietaryAdvice && (
-                <div style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--slate-600)' }}>
-                  <strong>Dietary & Lifestyle Advice:</strong> {selectedRx.dietaryAdvice}
-                </div>
-              )}
-
-              <div className="rx-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--slate-200)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=85x85&data=${encodeURIComponent('CAREPULSE-VERIFIED-RX-' + selectedRx.prescriptionId + '-' + (patientProfile?.name || 'Patient'))}`}
-                    alt="Scannable RX QR Code"
-                    style={{ width: '70px', height: '70px', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '2px' }}
-                  />
-                  <div>
-                    <div style={{ fontSize: '0.7rem', fontWeight: '800', color: 'var(--primary-700)', textTransform: 'uppercase' }}>
-                      Verified Digital RX
-                    </div>
-                    <div style={{ fontSize: '0.6875rem', color: 'var(--slate-500)', maxWidth: '160px', lineHeight: '1.2' }}>
-                      Show QR code at hospital pharmacy to dispense medication.
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ textAlign: 'right' }}>
-                  <div
-                    style={{
-                      display: 'inline-block',
-                      border: '2px solid #0891b2',
-                      borderRadius: '8px',
-                      padding: '0.35rem 0.75rem',
-                      marginBottom: '0.5rem',
-                      backgroundColor: 'rgba(8, 145, 178, 0.05)',
-                    }}
-                  >
-                    <div style={{ fontSize: '0.65rem', color: 'var(--primary-600)', fontWeight: '800', textTransform: 'uppercase' }}>
-                      ✓ Digitally Signed & Sealed
-                    </div>
-                    <div style={{ fontWeight: '800', fontSize: '0.875rem', color: 'var(--slate-900)' }}>{selectedRx.doctor?.user?.name || 'Attending Physician'}</div>
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--slate-500)' }}>Authorized Medical Practitioner • CarePulse</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-footer" style={{ marginTop: '1.5rem' }}>
-              <button className="btn btn-secondary" onClick={() => setSelectedRx(null)}>
-                Close
+            <label>
+              Reason for visit
+              <textarea
+                className="form-control"
+                rows={3}
+                value={booking.reason}
+                onChange={(event) => setBooking((prev) => ({ ...prev, reason: event.target.value }))}
+                placeholder="Briefly describe your symptoms or reason for the visit."
+              />
+            </label>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setIsBookingOpen(false)}>
+                Cancel
               </button>
-              <button className="btn btn-primary" onClick={() => window.print()}>
-                <Printer size={16} /> Print Official RX
+              <button type="submit" className="btn btn-primary" disabled={submitting}>
+                {submitting ? 'Sending…' : 'Send request'}
               </button>
             </div>
-          </div>
-        )}
-      </Modal>
+          </form>
+        </Modal>
+      )}
 
-      {/* Invoice Modal */}
-      <Modal
-        isOpen={!!selectedInvoice}
-        onClose={() => setSelectedInvoice(null)}
-        title="Official Hospital Billing Receipt"
-        maxWidth="800px"
-      >
-        {selectedInvoice && (
-          <div>
-            <div className="invoice-sheet">
-              <div className="rx-header">
-                <div>
-                  <div className="rx-hospital-title">CarePulse Hospital</div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--slate-500)' }}>Tax Invoice Receipt</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: '800', color: 'var(--primary-700)', fontSize: '1.2rem' }}>{selectedInvoice.invoiceNumber}</div>
-                  <StatusBadge status={selectedInvoice.paymentStatus} />
-                </div>
-              </div>
+      {selectedRx && (
+        <Modal isOpen title={`Prescription ${selectedRx.reference}`} onClose={() => setSelectedRx(null)}>
+          <dl style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '0.4rem 1rem' }}>
+            <dt>Medication</dt>
+            <dd>
+              {selectedRx.medication} {selectedRx.strength || ''}
+            </dd>
+            <dt>Dosage</dt>
+            <dd>{selectedRx.dosage || '—'}</dd>
+            <dt>Route</dt>
+            <dd>{selectedRx.route || '—'}</dd>
+            <dt>Frequency</dt>
+            <dd>{selectedRx.frequency || '—'}</dd>
+            <dt>Duration</dt>
+            <dd>{selectedRx.duration || '—'}</dd>
+            <dt>Quantity</dt>
+            <dd>{selectedRx.quantity || '—'}</dd>
+            <dt>Instructions</dt>
+            <dd>{selectedRx.instructions || '—'}</dd>
+            <dt>Prescribed by</dt>
+            <dd>{selectedRx.clinician_name || '—'}</dd>
+            <dt>Status</dt>
+            <dd>
+              <StatusBadge status={selectedRx.status} />
+            </dd>
+            <dt>Dispensed</dt>
+            <dd>{selectedRx.dispensed_at ? formatDateTime(selectedRx.dispensed_at) : 'Not yet dispensed'}</dd>
+          </dl>
+          <p style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: '1rem' }}>
+            Prescription instructions are written by your clinician and cannot be changed in this portal.
+          </p>
+        </Modal>
+      )}
 
-              <div className="portal-table-scroll" style={{ marginBottom: '1.5rem' }}>
+      {selectedLab && (
+        <Modal isOpen title={`Laboratory report ${selectedLab.reference}`} onClose={() => setSelectedLab(null)}>
+          <p style={{ marginBottom: '0.75rem' }}>
+            <strong>{selectedLab.test_name}</strong> • released {formatDateTime(selectedLab.released_at)}
+          </p>
+          {selectedLab.results?.length ? (
+            <div className="table-container">
               <table className="custom-table">
                 <thead>
                   <tr>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th>Total</th>
+                    <th>Test</th>
+                    <th>Result</th>
+                    <th>Unit</th>
+                    <th>Reference range</th>
+                    <th>Flag</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {selectedInvoice.items?.map((item, idx) => (
-                    <tr key={idx}>
-                      <td><strong>{item.description}</strong></td>
-                      <td>{item.category}</td>
-                      <td>₹{item.total}</td>
+                  {selectedLab.results.map((result, index) => (
+                    <tr key={index}>
+                      <td>{result.name}</td>
+                      <td>{result.value}</td>
+                      <td>{result.unit || '—'}</td>
+                      <td>{result.reference_range || '—'}</td>
+                      <td>{result.flag || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              </div>
-
-              <div className="invoice-summary-box">
-                <div className="invoice-summary-row">
-                  <span>Grand Total:</span>
-                  <strong>₹{selectedInvoice.totalAmount}</strong>
-                </div>
-                <div className="invoice-summary-row" style={{ color: '#059669' }}>
-                  <span>Paid:</span>
-                  <strong>₹{selectedInvoice.paidAmount}</strong>
-                </div>
-                <div className="invoice-summary-row" style={{ color: selectedInvoice.balanceAmount > 0 ? '#dc2626' : '#059669' }}>
-                  <span>Balance Due:</span>
-                  <strong>₹{selectedInvoice.balanceAmount}</strong>
-                </div>
-              </div>
             </div>
+          ) : (
+            <p>No structured values were attached to this report. Please contact the laboratory for a printed copy.</p>
+          )}
+          {selectedLab.comments && <p style={{ marginTop: '0.75rem' }}>{selectedLab.comments}</p>}
+        </Modal>
+      )}
 
-            <div className="modal-footer" style={{ marginTop: '1.5rem' }}>
-              <button className="btn btn-secondary" onClick={() => setSelectedInvoice(null)}>
-                Close
-              </button>
-              <button className="btn btn-primary" onClick={() => window.print()}>
-                <Printer size={16} /> Print Receipt
-              </button>
-            </div>
+      {selectedImaging && (
+        <Modal isOpen title={`Imaging report ${selectedImaging.reference}`} onClose={() => setSelectedImaging(null)}>
+          <p style={{ marginBottom: '0.75rem' }}>
+            <strong>{selectedImaging.exam_name}</strong>
+            {selectedImaging.modality ? ` (${selectedImaging.modality})` : ''} • released {formatDateTime(selectedImaging.released_at)}
+          </p>
+          <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Findings</h3>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{selectedImaging.findings || 'Not recorded.'}</p>
+          <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--slate-500)' }}>Impression</h3>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{selectedImaging.impression || 'Not recorded.'}</p>
+          <p style={{ fontSize: '0.8rem', color: 'var(--slate-500)' }}>
+            Reported by {selectedImaging.radiologist || 'the radiology team'}.
+          </p>
+        </Modal>
+      )}
+
+      {selectedInvoice && (
+        <Modal isOpen title={`Invoice ${selectedInvoice.number}`} onClose={() => setSelectedInvoice(null)}>
+          <p style={{ marginBottom: '0.75rem' }}>
+            Issued {formatDate(selectedInvoice.issued_at)} • <StatusBadge status={selectedInvoice.status} />
+          </p>
+          <div className="table-container">
+            <table className="custom-table">
+              <thead>
+                <tr>
+                  <th>Description</th>
+                  <th>Qty</th>
+                  <th>Unit price</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(selectedInvoice.items || []).map((item, index) => (
+                  <tr key={index}>
+                    <td>{item.description}</td>
+                    <td>{item.quantity}</td>
+                    <td>{money(item.unit_price, selectedInvoice.currency)}</td>
+                    <td>{money(item.amount, selectedInvoice.currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-      </Modal>
-
-      {/* View Scan Modal */}
-      <Modal
-        isOpen={!!viewScan}
-        onClose={() => setViewScan(null)}
-        title={viewScan?.title || 'Diagnostic Imaging Viewer'}
-        maxWidth="750px"
-      >
-        {viewScan && (
-          <div>
-            <div className="portal-scan-viewer">
-              <img src={viewScan.fileUrl} alt={viewScan.title} style={{ maxWidth: '100%', maxHeight: '480px', objectFit: 'contain' }} />
-            </div>
-            <div style={{ marginTop: '1rem' }}>
-              <div style={{ color: 'var(--slate-900)' }}>
-                <strong>Category:</strong> {viewScan.category}
-              </div>
-              {viewScan.notes && (
-                <p style={{ fontSize: '0.875rem', color: 'var(--slate-600)', marginTop: '0.25rem' }}>{viewScan.notes}</p>
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Smart Symptom Checker & Specialty Triage Modal */}
-      <SymptomTriageModal
-        isOpen={isTriageOpen}
-        onClose={() => setIsTriageOpen(false)}
-        onBookDepartment={(dept) => {
-          setBookingForm((prev) => ({ ...prev, department: dept }));
-          setIsBookingOpen(true);
-        }}
-      />
-
-      {/* Telehealth Video Consultation Studio Modal */}
-      <TelehealthRoomModal
-        isOpen={isTelehealthOpen}
-        onClose={() => {
-          setIsTelehealthOpen(false);
-          setTelehealthDoc(null);
-        }}
-        patient={user}
-        doctor={telehealthDoc}
-      />
-
-      {/* Smart Pathology Lab Report Generator Modal */}
-      <PathologyReportGeneratorModal
-        isOpen={isPathologyOpen}
-        onClose={() => setIsPathologyOpen(false)}
-        defaultPatient={user}
-      />
+          <dl style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.3rem 1rem', marginTop: '0.75rem' }}>
+            <dt>Subtotal</dt>
+            <dd>{money(selectedInvoice.subtotal, selectedInvoice.currency)}</dd>
+            <dt>Discount</dt>
+            <dd>{money(selectedInvoice.discount, selectedInvoice.currency)}</dd>
+            <dt>Tax</dt>
+            <dd>{money(selectedInvoice.tax, selectedInvoice.currency)}</dd>
+            <dt>
+              <strong>Total</strong>
+            </dt>
+            <dd>
+              <strong>{money(selectedInvoice.total, selectedInvoice.currency)}</strong>
+            </dd>
+            <dt>Paid</dt>
+            <dd>{money(selectedInvoice.amount_paid, selectedInvoice.currency)}</dd>
+            <dt>Balance</dt>
+            <dd>{money(selectedInvoice.outstanding, selectedInvoice.currency)}</dd>
+          </dl>
+          {selectedInvoice.payments?.length ? (
+            <>
+              <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--slate-500)', marginTop: '1rem' }}>Payments</h3>
+              <ul style={{ listStyle: 'none', padding: 0 }}>
+                {selectedInvoice.payments.map((payment) => (
+                  <li key={payment.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                    <span>{formatDate(payment.created_at)} • {payment.method || 'payment'}</span>
+                    <span>
+                      {money(payment.amount, payment.currency)} • {payment.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </Modal>
+      )}
     </div>
   );
 };
+
+export default PatientPortal;

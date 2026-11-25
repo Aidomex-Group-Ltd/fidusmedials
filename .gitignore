@@ -28,3 +28,10 @@ dist-ssr
 
 # Wrangler local state (Miniflare simulation DBs; not for version control)
 .wrangler/state/
+
+# Wrangler local secrets
+.dev.vars
+.dev.vars.*
+
+# Wrangler transient build output
+.wrangler/tmp/

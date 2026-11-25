@@ -4,7 +4,7 @@ import { useToast } from '../context/ToastContext';
 import { ArrowLeft, ArrowRight, Lock, Mail } from 'lucide-react';
 
 export const StaffLogin = ({ onNavigateHome }) => {
-  const { staffLogin, user } = useAuth();
+  const { staffLogin, user, logout } = useAuth();
   const toast = useToast();
 
   const [email, setEmail] = useState('');
@@ -142,7 +142,7 @@ export const StaffLogin = ({ onNavigateHome }) => {
           {user && user.role === 'Patient' && (
             <div className="cp-auth-switch" style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--warning-50)', border: '1px solid var(--warning-200)', borderRadius: '10px', color: 'var(--warning-800)', fontSize: '0.9rem' }}>
               <strong>Not the right portal?</strong> You are signed in as a patient.{' '}
-              <button type="button" className="cp-link" onClick={() => { useAuth().logout(); window.location.href = '/login'; }}>
+              <button type="button" className="cp-link" onClick={async () => { await logout(); window.location.href = '/login'; }}>
                 Go to Patient Login
               </button>
               .

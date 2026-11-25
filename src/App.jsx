@@ -27,6 +27,7 @@ import { PatientForgotPassword } from './pages/PatientForgotPassword';
 import { PatientResetPassword } from './pages/PatientResetPassword';
 import { PatientVerifyEmail } from './pages/PatientVerifyEmail';
 import { StaffLogin } from './pages/StaffLogin';
+import { AdminBootstrap } from './pages/AdminBootstrap';
 
 import { StaffApply } from './pages/StaffApply';
 import { StaffForgotPassword } from './pages/StaffForgotPassword';
@@ -142,6 +143,7 @@ const MainLayout = () => {
   } = useAuth();
   const [path, navigate] = usePath();
   const [globalSearch, setGlobalSearch] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const appTab = path.startsWith('/app/') ? path.slice('/app/'.length).split('/')[0] : null;
   const allowedTabs = user ? tabsForRole(user.role) : [];
@@ -157,7 +159,15 @@ const MainLayout = () => {
     }
   }, [user, loading, path, appTab, activeTab, navigate]);
 
-  const setActiveTab = useCallback((tab) => navigate(`/app/${tab}`), [navigate]);
+  const setActiveTab = useCallback((tab) => {
+    navigate(`/app/${tab}`);
+    setSidebarOpen(false);
+  }, [navigate]);
+
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [path]);
 
   if (loading) {
     return (
@@ -184,6 +194,12 @@ const MainLayout = () => {
         }
         if (path === '/patient/reset-password') {
           return <PatientResetPassword onNavigateLogin={() => navigate('/login')} onNavigateHome={() => navigate('/')} />;
+        }
+        if (path === '/reset-password') {
+          return <PatientResetPassword onNavigateLogin={() => navigate('/login')} onNavigateHome={() => navigate('/')} />;
+        }
+        if (path === '/admin/bootstrap' || path === '/admin/bootstrap/verify') {
+          return <AdminBootstrap onNavigateLogin={() => navigate('/staff/login')} onNavigateHome={() => navigate('/')} />;
         }
         if (path === '/verify-email') {
           return <PatientVerifyEmail onNavigateLogin={() => navigate('/login')} onNavigateHome={() => navigate('/')} />;
@@ -228,10 +244,11 @@ const MainLayout = () => {
   }
   return (
     <div className="app-container">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="main-content">
         {import.meta.env.DEV && <RoleSwitcher />}
-        <Navbar onSearch={setGlobalSearch} searchQuery={globalSearch} />
+        <Navbar onSearch={setGlobalSearch} searchQuery={globalSearch} onMenuClick={() => setSidebarOpen((open) => !open)} />
         <main className="page-body">{renderActivePortal()}</main>
       </div>
       <ChatBot />

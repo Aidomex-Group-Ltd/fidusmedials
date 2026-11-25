@@ -15,6 +15,7 @@ import {
   Clock,
   FileCheck,
   Shield,
+  Mail,
   CreditCard,
   User,
   PlusCircle,
@@ -32,7 +33,7 @@ import {
   ScanLine,
 } from 'lucide-react';
 
-export const Sidebar = ({ activeTab, setActiveTab }) => {
+export const Sidebar = ({ activeTab, setActiveTab, isOpen = false, onClose }) => {
   const { user, logout, isPatient, isDoctor, isNurse, isMidwife, isClinician, isLabStaff, isPharmacyStaff, isRadiologyStaff, isAdminAndFinance } = useAuth();
 
   // Role-specific navigation definitions
@@ -54,6 +55,9 @@ export const Sidebar = ({ activeTab, setActiveTab }) => {
 
   const adminNav = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'admin-staff', label: 'Staff Management', icon: Users },
+    { id: 'admin-invitations', label: 'Invitations', icon: Mail },
+    { id: 'admin-audit', label: 'Audit & Security', icon: Shield },
     { id: 'appointments', label: 'Appointments', icon: CalendarCheck },
     { id: 'patients', label: 'Patients', icon: Users },
     { id: 'doctors', label: 'Doctors', icon: Stethoscope },
@@ -113,7 +117,10 @@ export const Sidebar = ({ activeTab, setActiveTab }) => {
   ];
 
   const roleConfigs = {
+    'System Administrator': { nav: adminNav, title: 'System Administration', icon: Shield, badge: 'System Admin' },
     Admin: { nav: adminNav, title: 'Admin Suite', icon: Activity, badge: 'Hospital Ops' },
+    Administrator: { nav: adminNav, title: 'Admin Suite', icon: Activity, badge: 'Hospital Ops' },
+    'Facility Administrator': { nav: adminNav, title: 'Facility Administration', icon: Shield, badge: 'Facility Admin' },
     Receptionist: { nav: adminNav, title: 'Reception Suite', icon: Clipboard, badge: 'Front Desk' },
     Doctor: { nav: doctorNav, title: 'Doctor Portal', icon: Stethoscope, badge: 'Clinical Desk' },
     Patient: { nav: patientNav, title: 'Patient Hub', icon: HeartPulse, badge: 'Personal Health' },
@@ -133,7 +140,7 @@ export const Sidebar = ({ activeTab, setActiveTab }) => {
   const badgeText = config.badge;
 
   return (
-    <aside className="app-sidebar">
+    <aside className={`app-sidebar ${isOpen ? 'is-open' : ''}`} aria-label="Primary navigation">
       <div className="sidebar-brand">
         <div className="brand-icon-wrapper">
           <PortalIconComponent size={22} />
@@ -153,7 +160,10 @@ export const Sidebar = ({ activeTab, setActiveTab }) => {
             <button
               key={item.id}
               className={`nav-item ${isActive ? 'active' : ''}`}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                setActiveTab(item.id);
+                onClose?.();
+              }}
             >
               <Icon className="nav-item-icon" />
               <span>{item.label}</span>

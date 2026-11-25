@@ -12,7 +12,12 @@
     }
   ],
   "vars": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "EMAIL_FROM": "Fidus Medical Center <noreply@fidusmedicals.space>",
+    "SUPPORT_EMAIL": "consult@fidusmedicals.space",
+    "APP_URL": "https://fidus-staging.aidomexgroupltd.workers.dev",
+    "FRONTEND_URL": "https://fidus-staging.aidomexgroupltd.workers.dev",
+    "BACKEND_URL": "https://fidus-staging.aidomexgroupltd.workers.dev"
   },
   "assets": {
     "not_found_handling": "single-page-application",
@@ -20,22 +25,47 @@
   },
   "env": {
     "production": {
-      "name": "fidus-production",
-      "workers_dev": true,
+      "name": "fidusmedials",
+      "workers_dev": false,
+      "routes": [
+        {
+          "pattern": "fidusmedicals.space",
+          "custom_domain": true
+        },
+        {
+          "pattern": "www.fidusmedicals.space",
+          "custom_domain": true
+        }
+      ],
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "fidus-staging-db",
-          "database_id": "19d312d4-f467-4908-877d-a6fb2dc10ab2"
+          "database_name": "fidusmeduals-prod",
+          "database_id": "1f66c7a8-cc0e-45ac-acc8-317993db80a6"
         }
       ],
       "vars": {
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "EMAIL_FROM": "Fidus Medical Center <noreply@fidusmedicals.space>",
+        "SUPPORT_EMAIL": "consult@fidusmedicals.space",
+        "APP_URL": "https://fidusmedicals.space",
+        "FRONTEND_URL": "https://fidusmedicals.space",
+        "BACKEND_URL": "https://fidusmedicals.space"
       },
       "assets": {
         "not_found_handling": "single-page-application",
         "directory": "dist"
+      },
+      "triggers": {
+        "crons": [
+          "*/5 * * * *"
+        ]
       }
     }
+  },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
   }
 }

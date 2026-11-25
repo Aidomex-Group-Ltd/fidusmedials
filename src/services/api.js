@@ -136,6 +136,75 @@ export const emailService = {
   test: (data) => api.post('/email/test', data),
 };
 
+export const adminService = {
+  overview: () => api.get('/admin/overview'),
+  staff: () => api.get('/admin/staff'),
+  invitations: () => api.get('/admin/invitations'),
+  audit: () => api.get('/admin/audit'),
+  updateStatus: (data) => api.post('/admin/users/status', data),
+  assignRole: (data) => api.post('/admin/users/role', data),
+  resetPassword: (email) => api.post('/admin/users/reset-password', { email }),
+  bootstrapStatus: () => api.get('/admin/bootstrap/status'),
+  bootstrapRequest: (email) => api.post('/admin/bootstrap/request', { email }),
+  bootstrapVerify: (token) => api.post('/admin/bootstrap/verify', { token }),
+};
+
+export const notificationService = {
+  list: () => api.get('/notifications'),
+  markRead: (id) => api.post('/notifications/read', { id }),
+  markAllRead: () => api.post('/notifications/read-all', {}),
+  preferences: () => api.get('/notifications/preferences'),
+  updatePreferences: (data) => api.post('/notifications/preferences', data),
+  streamUrl: () => '/api/notifications/stream',
+};
+
+export const taskService = {
+  list: () => api.get('/tasks'),
+  updateStatus: (id, status) => api.post('/tasks/status', { id, status }),
+};
+
+// Patient portal: every call is scoped server-side to the signed-in patient.
+export const patientPortalService = {
+  overview: () => api.get('/patient/overview'),
+  appointments: (params) => api.get('/patient/appointments', { params }),
+  requestAppointment: (data) => api.post('/patient/appointments', data),
+  cancelAppointment: (data) => api.post('/patient/appointments/cancel', data),
+  prescriptions: (params) => api.get('/patient/prescriptions', { params }),
+  reports: () => api.get('/patient/reports'),
+  invoices: () => api.get('/patient/invoices'),
+  profile: () => api.get('/patient/profile'),
+  updateProfile: (data) => api.patch('/patient/profile', data),
+  activity: (params) => api.get('/patient/activity', { params }),
+  clinicians: () => api.get('/patient/clinicians'),
+};
+
+export const workflowService = {
+  createAppointment: (data) => api.post('/workflows/appointments', data),
+  updateAppointmentStatus: (data) => api.post('/workflows/appointments/status', data),
+  dispensePrescription: (data) => api.post('/workflows/pharmacy/dispense', data),
+  updateLabStatus: (data) => api.post('/workflows/lab/status', data),
+  updateImagingStatus: (data) => api.post('/workflows/radiology/status', data),
+  payments: () => api.get('/workflows/billing/payments'),
+  recordPayment: (data) => api.post('/workflows/billing/payments', data),
+  verifyPayment: (data) => api.post('/workflows/billing/payments/verify', data),
+  listPatients: (q) => api.get(`/staff/patients${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  appointments: () => api.get('/workflows/appointments'),
+  consultations: () => api.get('/workflows/consultations'),
+  prescriptions: () => api.get('/workflows/pharmacy/prescriptions'),
+  labRequests: () => api.get('/workflows/lab/requests'),
+  radiologyRequests: () => api.get('/workflows/radiology/requests'),
+  invoices: () => api.get('/workflows/billing/invoices'),
+  createConsultation: (data) => api.post('/workflows/consultations', data),
+  createLabRequest: (data) => api.post('/workflows/lab/requests', data),
+  completeLabResult: (data) => api.post('/workflows/lab/results', data),
+  createRadiologyRequest: (data) => api.post('/workflows/radiology/requests', data),
+  completeRadiologyReport: (data) => api.post('/workflows/radiology/reports', data),
+  createPrescription: (data) => api.post('/workflows/pharmacy/prescriptions', data),
+  createInvoice: (data) => api.post('/workflows/billing/invoices', data),
+  departmentQueue: (department) => api.get(`/queues/department?department=${encodeURIComponent(department)}`),
+  ops: () => api.get('/admin/notifications/ops'),
+};
+
 export const aiService = {
   analyzeScan: (formData) =>
     api.post('/ai/analyze-scan', formData, {

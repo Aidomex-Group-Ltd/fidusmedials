@@ -1,7 +1,25 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { authService } from '../services/api';
+import { authService, staffService } from '../services/api';
 
 const AuthContext = createContext(null);
+
+// Every non-patient role is staff for routing purposes. Kept in one place so a
+// new role added to the backend is not silently locked out of the portal.
+const STAFF_ROLES = [
+  'System Administrator',
+  'Administrator',
+  'Facility Administrator',
+  'Medical Director',
+  'Doctor',
+  'Receptionist',
+  'Nurse',
+  'Midwife',
+  'Clinician',
+  'Laboratory Staff',
+  'Pharmacy Staff',
+  'Radiology Staff',
+  'Admin & Finance',
+];
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -144,7 +162,7 @@ export const AuthProvider = ({ children }) => {
     // Dev-only.
     switchDemoRole,
     updateUser,
-    isAdmin: user?.role === 'Administrator',
+    isAdmin: ['Administrator', 'System Administrator', 'Facility Administrator'].includes(user?.role),
     isDoctor: user?.role === 'Doctor',
     isNurse: user?.role === 'Nurse',
     isMidwife: user?.role === 'Midwife',
@@ -154,10 +172,10 @@ export const AuthProvider = ({ children }) => {
     isRadiologyStaff: user?.role === 'Radiology Staff',
     isAdminAndFinance: user?.role === 'Admin & Finance',
     isReceptionist: user?.role === 'Receptionist',
-    isStaff: ['Administrator', 'Receptionist', 'Nurse', 'Midwife', 'Clinician', 'Laboratory Staff', 'Pharmacy Staff', 'Radiology Staff', 'Admin & Finance'].includes(user?.role),
+    isStaff: STAFF_ROLES.includes(user?.role),
     isPatient: user?.role === 'Patient',
     isPatientAccount: user?.role === 'Patient',
-    isStaffAccount: ['Administrator', 'Receptionist', 'Nurse', 'Midwife', 'Clinician', 'Laboratory Staff', 'Pharmacy Staff', 'Radiology Staff', 'Admin & Finance'].includes(user?.role),
+    isStaffAccount: STAFF_ROLES.includes(user?.role),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

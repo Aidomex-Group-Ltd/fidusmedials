@@ -1,46 +1,111 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
+import { dashboardService, workflowService } from '../../services/api';
 import { StatCard } from '../../components/common/StatCard';
-import { Pill, Package, Syringe, FileCheck, AlertTriangle, Clock } from 'lucide-react';
+import { QueueState, useAsync, useQueue } from '../../components/staff/StaffWorkflow';
+import { Pill, Clock, CheckCircle, Package } from 'lucide-react';
 
 const TABS = [
   { id: 'overview', label: 'Pharmacy Dashboard', icon: Pill },
-  { id: 'inventory', label: 'Inventory', icon: Package },
-  { id: 'prescriptions', label: 'Dispense Queue', icon: Syringe },
-  { id: 'favorites', label: 'Favorites & Suppliers', icon: Pill },
+  { id: 'prescriptions', label: 'Dispensing Queue', icon: Package },
+  { id: 'favorites', label: 'Dispensed', icon: CheckCircle },
 ];
+
+const OPEN = ['issued', 'pending_pharmacy', 'processing', 'partially_dispensed'];
+const CLOSED = ['dispensed', 'cancelled', 'expired', 'discontinued'];
 
 export const PharmacyPortal = ({ subTab = 'overview', setSubTab }) => {
   const { user } = useAuth();
+  const toast = useToast();
   const currentTab = subTab || 'overview';
+
+  const queue = useQueue('prescriptions');
+  const stats = useAsync(() => dashboardService.getStats(), []);
+  const [busy, setBusy] = useState(false);
+  const counts = stats.data?.data?.counts || {};
+
+  const setStatus = async (row, status) => {
+    try {
+      setBusy(true);
+      await workflowService.dispensePrescription({ id: row.id, status });
+      toast.success(`${row.medication}: ${status.replace(/_/g, ' ')}`);
+      await queue.reload();
+      await stats.reload();
+    } catch (err) {
+      toast.error(err.message || 'Could not update the prescription.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const table = (rows, actions) => (
+    <div className="table-container">
+      <table className="custom-table">
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Patient</th>
+            <th>Medication</th>
+            <th>Directions</th>
+            <th>Prescriber</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>
+                <strong>{row.reference}</strong>
+              </td>
+              <td>
+                {row.patient_name || 'Patient'}
+                <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)' }}>{row.patient_number || row.patient_ref}</div>
+              </td>
+              <td>
+                {row.medication} {row.strength || ''}
+                <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)' }}>{row.quantity || ''}</div>
+              </td>
+              <td style={{ maxWidth: 200 }}>
+                {[row.dosage, row.frequency, row.duration].filter(Boolean).join(' • ') || '—'}
+              </td>
+              <td>{row.clinician_name || '—'}</td>
+              <td>{row.status.replace(/_/g, ' ')}</td>
+              <td>{actions(row)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const openRows = queue.items.filter((item) => OPEN.includes(item.status));
+  const closedRows = queue.items.filter((item) => CLOSED.includes(item.status));
 
   return (
     <div>
       <section className="portal-hero">
-        <img className="portal-hero-photo" src="/images/pharmacy.webp" alt="" aria-hidden="true" />
         <div className="portal-hero-main">
-          <img
+          <div
             className="portal-hero-avatar"
-            src={user?.avatar || 'https://images.unsplash.com/photo-1585435557343-3b092031a831?auto=format&fit=crop&q=80&w=200'}
-            alt="Pharmacy staff avatar"
-          />
+            aria-hidden="true"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--violet-50)', color: 'var(--violet-600)', fontWeight: 700 }}
+          >
+            {(user?.name || 'P').slice(0, 1).toUpperCase()}
+          </div>
           <div>
             <div className="portal-hero-meta">
-              <span className="portal-status-pill">
-                <span className="portal-live-dot" /> On duty
-              </span>
-              <span>Central Pharmacy</span>
+              <span className="portal-status-pill">Pharmacy</span>
+              <span>{user?.department || 'Pharmacy'}</span>
             </div>
-            <h1 className="portal-hero-title">{user?.name || 'Pharmacy Staff'}</h1>
-            <p className="portal-hero-sub">Pharmacist • CarePulse Pharmacy & Dispensing</p>
+            <h1 className="portal-hero-title">{user?.name || 'Pharmacy staff'}</h1>
+            <p className="portal-hero-sub">Dispensing against clinician-issued prescriptions</p>
           </div>
         </div>
         <div className="portal-hero-actions">
-          <button className="btn btn-secondary" onClick={() => setSubTab?.('prescriptions')}>
-            <Syringe size={16} /> Dispense Queue
-          </button>
-          <button className="btn btn-secondary" onClick={() => setSubTab?.('inventory')}>
-            <Package size={16} /> Inventory
+          <button className="btn btn-secondary" onClick={queue.reload}>
+            Refresh queue
           </button>
         </div>
       </section>
@@ -58,21 +123,74 @@ export const PharmacyPortal = ({ subTab = 'overview', setSubTab }) => {
         ))}
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">Pharmacy — {currentTab}</h2>
-          <p className="card-subtitle">Dispensing, stock management and prescription fulfillment.</p>
-        </div>
+      {currentTab === 'overview' && (
         <div className="stats-grid">
-          <StatCard label="Rx in Dispense Queue" value={6} subtext="Awaiting pickup" icon={Syringe} color="amber" />
-          <StatCard label="Out of Stock Items" value={2} subtext="Needs reorder alert" icon={AlertTriangle} color="rose" />
-          <StatCard label="Inventory Items" value={348} subtext="Active drug stock" icon={Package} color="teal" />
-          <StatCard label="Dispensed Today" value={27} subtext="Prescriptions filled" icon={FileCheck} color="indigo" />
+          <StatCard label="Awaiting dispensing" value={counts.pendingPrescriptions ?? '—'} subtext="Open prescriptions" icon={Clock} color="amber" />
+          <StatCard label="In my queue" value={openRows.length} subtext="Records in my scope" icon={Package} color="indigo" />
+          <StatCard label="Prescriptions today" value={queue.items.filter((item) => new Date(item.created_at).toDateString() === new Date().toDateString()).length} subtext="Issued today" icon={Pill} color="teal" />
+          <StatCard label="Dispensed" value={closedRows.filter((item) => item.status === 'dispensed').length} subtext="Completed in this queue" icon={CheckCircle} color="emerald" />
         </div>
-        <div style={{ padding: '1rem', color: 'var(--slate-500)', fontSize: '0.875rem', lineHeight: 1.6 }}>
-          Minimal placeholder for the Pharmacy portal. Add dispensing queue, stock/inventory management, reorder alerts and supplier list, consistent with the CarePulse design language.
+      )}
+
+      {(currentTab === 'prescriptions' || currentTab === 'overview') && (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">Dispensing queue</h2>
+              <p className="card-subtitle">Patients are notified as each prescription is dispensed</p>
+            </div>
+          </div>
+          <QueueState
+            loading={queue.loading}
+            error={queue.error}
+            onRetry={queue.reload}
+            empty={openRows.length === 0}
+            emptyTitle="No prescriptions waiting"
+            emptyDescription="Prescriptions appear here as soon as a clinician issues them."
+          >
+            {table(openRows, (row) => (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {row.status === 'issued' && (
+                  <button className="btn btn-outline-primary btn-sm" disabled={busy} onClick={() => setStatus(row, 'processing')}>
+                    Start
+                  </button>
+                )}
+                <button className="btn btn-outline-primary btn-sm" disabled={busy} onClick={() => setStatus(row, 'partially_dispensed')}>
+                  Partial
+                </button>
+                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => setStatus(row, 'dispensed')}>
+                  Dispense
+                </button>
+              </div>
+            ))}
+          </QueueState>
         </div>
-      </div>
+      )}
+
+      {currentTab === 'favorites' && (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">Dispensed and closed prescriptions</h2>
+              <p className="card-subtitle">Full history for the prescriptions in your scope</p>
+            </div>
+          </div>
+          <QueueState
+            loading={queue.loading}
+            error={queue.error}
+            onRetry={queue.reload}
+            empty={closedRows.length === 0}
+            emptyTitle="Nothing dispensed yet"
+            emptyDescription="Completed prescriptions are kept here for reference."
+          >
+            {table(closedRows, (row) => (
+              <span style={{ fontSize: '0.8rem', color: 'var(--slate-500)' }}>
+                {row.dispensed_at ? `dispensed ${new Date(row.dispensed_at).toLocaleDateString()}` : row.status}
+              </span>
+            ))}
+          </QueueState>
+        </div>
+      )}
     </div>
   );
 };

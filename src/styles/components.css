@@ -1300,6 +1300,46 @@
   }
 }
 
+/* Mobile navigation: the sidebar becomes an off-canvas drawer. */
+.sidebar-toggle {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .sidebar-toggle {
+    display: inline-flex;
+  }
+
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: 280px;
+    max-width: 85vw;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.18);
+  }
+
+  .app-sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(15, 23, 42, 0.45);
+  }
+}
+
 @media (max-width: 768px) {
   .app-navbar {
     padding: 0 1rem;

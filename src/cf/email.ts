@@ -14,7 +14,7 @@ const BRAND = {
   name: 'Fidus Medical Center',
   domain: 'fidusmedicals.space',
   support: 'consult@fidusmedicals.space',
-  from: 'Fidus Medical Center <consult@fidusmedicals.space>',
+  from: 'Fidus Medical Center <noreply@fidusmedicals.space>',
   address: 'Bugembegembe Wakiso',
   phone: '+256705353035',
   whatsapp: '+256751597517',
@@ -185,19 +185,6 @@ export function staffRegistrationEmail(env: EmailEnv, name: string) {
   return { subject: 'Fidus staff application received', html, text: `Your Fidus staff application has been received and is pending review.` };
 }
 
-export function staffApprovalEmail(env: EmailEnv, name: string, loginUrl: string, tempPassword?: string) {
-  const tempBlock = tempPassword ? `<div class="panel"><strong>Temporary password</strong><br/>${esc(tempPassword)}<br/><span class="muted">Please sign in and change your password immediately.</span></div>` : '';
-  const html = layout('Staff account approved', 'Your Fidus staff account has been approved.', `
-    <h1>Your staff account is approved</h1>
-    <p>Hello ${esc(name || 'there')},</p>
-    <p>Your Fidus Medical Center staff account has been verified and approved. You may now sign in using your authorized staff credentials.</p>
-    ${tempBlock}
-    ${actionButton('Sign In to Staff Portal', loginUrl)}
-    <p class="muted">Access is limited to your assigned role and permissions. If you need assistance, contact ${esc(supportEmail(env))}.</p>
-  `, env);
-  return { subject: 'Your Fidus staff account has been approved', html, text: `Your staff account is approved. Sign in: ${loginUrl}` };
-}
-
 export function accountActivationEmail(env: EmailEnv, name: string, loginUrl: string) {
   const html = layout('Account activated', 'Your Fidus account is active.', `
     <h1>Your account is active</h1>
@@ -275,6 +262,174 @@ export function supportNotificationEmail(env: EmailEnv, name: string, message: s
     <p class="muted">If you need further assistance, reply to this email or contact ${esc(supportEmail(env))}.</p>
   `, env);
   return { subject: 'Fidus Medical Center support update', html, text: message };
+}
+
+// ---------------------------------------------------------------------------
+// Staff lifecycle + administration
+// ---------------------------------------------------------------------------
+
+export function staffInvitationEmail(
+  env: EmailEnv,
+  name: string,
+  role: string,
+  department: string,
+  acceptUrl: string,
+  expiresAt: string,
+  isResend = false,
+) {
+  const html = layout(
+    isResend ? 'Your Fidus invitation (resent)' : 'Invitation to join Fidus Medical Center',
+    `You have been invited to join Fidus as ${role}.`,
+    `
+    <h1>${isResend ? 'Your invitation has been resent' : 'You are invited to join Fidus Medical Center'}</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>An authorized administrator has invited you to join ${esc(BRAND.name)} in the staff portal.</p>
+    <div class="panel">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><td style="padding:6px 0;color:#64748b;">Role</td><td style="padding:6px 0;font-weight:600;">${esc(role)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Department</td><td style="padding:6px 0;font-weight:600;">${esc(department)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Expires</td><td style="padding:6px 0;font-weight:600;">${esc(expiresAt)}</td></tr>
+      </table>
+    </div>
+    ${actionButton('Accept Invitation', acceptUrl)}
+    <p class="muted">This invitation is single-use and expires on ${esc(expiresAt)}. If you were not expecting it, contact ${esc(supportEmail(env))}.</p>
+  `,
+    env,
+  );
+  return {
+    subject: isResend ? 'Your Fidus Medical Center invitation (resent)' : 'Invitation to join Fidus Medical Center',
+    html,
+    text: `You have been invited to join ${BRAND.name} as ${role} in ${department}. Accept: ${acceptUrl}. Expires: ${expiresAt}.`,
+  };
+}
+
+export function staffInviteCancelledEmail(env: EmailEnv, email: string, role: string, department: string) {
+  const html = layout('Invitation cancelled', 'Your Fidus staff invitation was cancelled.', `
+    <h1>Your invitation was cancelled</h1>
+    <p>Hello ${esc(email || 'there')},</p>
+    <p>Your invitation to join ${esc(BRAND.name)} as <strong>${esc(role)}</strong> in <strong>${esc(department)}</strong> has been cancelled and can no longer be used.</p>
+    <p class="muted">If you believe this was a mistake, contact ${esc(supportEmail(env))}.</p>
+  `, env);
+  return { subject: 'Your Fidus Medical Center invitation was cancelled', html, text: `Your invitation as ${role} in ${department} was cancelled.` };
+}
+
+export function staffApplicationReceivedEmail(env: EmailEnv, name: string, role: string, department: string) {
+  const html = layout('Staff application received', 'Your staff application is pending review.', `
+    <h1>Staff application received</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>We have received your application to join ${esc(BRAND.name)} as <strong>${esc(role)}</strong> in <strong>${esc(department)}</strong>.</p>
+    <div class="panel"><strong>What happens next?</strong><br/>An authorized administrator will review your application and verify your professional details. You will receive an email once a decision is made.</div>
+    <p class="muted">For assistance, contact ${esc(supportEmail(env))}.</p>
+  `, env);
+  return { subject: 'Fidus staff application received', html, text: `Your application as ${role} in ${department} is pending review.` };
+}
+
+export function staffActivationEmail(
+  env: EmailEnv,
+  name: string,
+  role: string,
+  department: string,
+  activationUrl: string,
+) {
+  const html = layout('Staff account approved', 'Your Fidus staff account has been approved.', `
+    <h1>Your staff access has been approved</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Your application to join ${esc(BRAND.name)} has been approved as <strong>${esc(role)}</strong> in <strong>${esc(department)}</strong>.</p>
+    <p>To finish setting up your account, choose a password using the secure link below. The link is single-use and expires in 7 days.</p>
+    ${actionButton('Set Your Password', activationUrl)}
+    <p class="muted">Access is limited to your assigned role and permissions. If you did not apply, contact ${esc(supportEmail(env))}.</p>
+  `, env);
+  return { subject: 'Your Fidus staff access has been approved', html, text: `Your staff access is approved. Set your password: ${activationUrl}` };
+}
+
+export function staffApplicationRejectedEmail(env: EmailEnv, name: string, reason?: string | null) {
+  const reasonBlock = reason ? `<div class="panel"><strong>Reason provided</strong><br/>${esc(reason)}</div>` : '';
+  const html = layout('Staff application update', 'An update on your Fidus staff application.', `
+    <h1>Update on your staff application</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Thank you for your interest in joining ${esc(BRAND.name)}. After review, we are unable to approve your staff application at this time.</p>
+    ${reasonBlock}
+    <p class="muted">If you believe this decision was made in error, contact ${esc(supportEmail(env))}.</p>
+  `, env);
+  return { subject: 'Update on your Fidus staff application', html, text: `Your staff application was not approved.${reason ? ' Reason: ' + reason : ''}` };
+}
+
+export function staffAccountActivatedEmail(env: EmailEnv, name: string, role: string, department: string) {
+  const html = layout('Staff account activated', 'Your Fidus staff account is active.', `
+    <h1>Your staff account is active</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Your invitation to join ${esc(BRAND.name)} as <strong>${esc(role)}</strong> in <strong>${esc(department)}</strong> has been accepted and your account is now active.</p>
+    ${actionButton('Sign In to Staff Portal', `${baseUrl(env)}/staff/login`)}
+  `, env);
+  return { subject: 'Your Fidus staff account is active', html, text: `Your staff account as ${role} is active.` };
+}
+
+export function staffAccessGrantedEmail(env: EmailEnv, name: string, loginUrl: string) {
+  const html = layout('Access granted', 'Your Fidus staff access has been restored.', `
+    <h1>Your staff access has been restored</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Your access to the ${esc(BRAND.name)} staff portal has been reactivated. You can sign in again using your usual credentials.</p>
+    ${actionButton('Sign In', loginUrl)}
+    <p class="muted">If you did not expect this change, contact ${esc(supportEmail(env))} immediately.</p>
+  `, env);
+  return { subject: 'Your Fidus staff access has been restored', html, text: `Your staff access has been restored. Sign in: ${loginUrl}` };
+}
+
+export function staffAccessSuspendedEmail(env: EmailEnv, name: string, reason?: string | null) {
+  const reasonBlock = reason ? `<div class="panel"><strong>Reason provided</strong><br/>${esc(reason)}</div>` : '';
+  const html = layout('Staff access suspended', 'Your Fidus staff access has been suspended.', `
+    <h1>Your staff access has been suspended</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Access to your ${esc(BRAND.name)} staff account has been suspended. You will not be able to sign in while the suspension is in place, and existing sessions have been revoked.</p>
+    ${reasonBlock}
+    <p class="muted">Contact ${esc(supportEmail(env))} if you need this reviewed.</p>
+  `, env);
+  return { subject: 'Your Fidus staff access has been suspended', html, text: `Your staff access has been suspended.${reason ? ' Reason: ' + reason : ''}` };
+}
+
+export function staffAccessRevokedEmail(env: EmailEnv, name: string, reason?: string | null) {
+  const reasonBlock = reason ? `<div class="panel"><strong>Reason provided</strong><br/>${esc(reason)}</div>` : '';
+  const html = layout('Staff access revoked', 'Your Fidus staff access has been revoked.', `
+    <h1>Your staff access has been revoked</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Access to your ${esc(BRAND.name)} staff account has been permanently revoked. All active sessions have been terminated.</p>
+    ${reasonBlock}
+    <p class="muted">Contact ${esc(supportEmail(env))} if you believe this is an error.</p>
+  `, env);
+  return { subject: 'Your Fidus staff access has been revoked', html, text: `Your staff access has been revoked.${reason ? ' Reason: ' + reason : ''}` };
+}
+
+export function staffPasswordChangedEmail(env: EmailEnv, name: string) {
+  const html = layout('Password changed', 'Your Fidus password was changed.', `
+    <h1>Your password was changed</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>The password for your ${esc(BRAND.name)} account was changed, and all other active sessions were signed out.</p>
+    <div class="panel"><strong>Was this not you?</strong><br/>Reset your password immediately and contact ${esc(supportEmail(env))}.</div>
+  `, env);
+  return { subject: 'Your Fidus Medical Center password was changed', html, text: 'Your Fidus password was changed and other sessions were signed out.' };
+}
+
+export function adminBootstrapVerificationEmail(env: EmailEnv, name: string, verifyUrl: string) {
+  const html = layout('Administrator bootstrap verification', 'Confirm ownership to activate administrator access.', `
+    <h1>Confirm administrator access</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>A System Administrator bootstrap was requested for this address. Confirm that you control this mailbox to complete the elevation. The link is single-use and expires in 1 hour.</p>
+    ${actionButton('Verify and Activate Access', verifyUrl)}
+    <div class="panel"><strong>Security notice</strong><br/>If you did not request this, do not click the link. Contact ${esc(supportEmail(env))} immediately and change your password.</div>
+  `, env);
+  return { subject: 'Fidus System Administrator verification', html, text: `Verify administrator access: ${verifyUrl} (expires in 1 hour)` };
+}
+
+export function adminNewLoginAlertEmail(env: EmailEnv, name: string, details: Record<string, string>) {
+  const rows = Object.entries(details).filter(([, v]) => v).map(([k, v]) => `<tr><td style="padding:6px 0;color:#64748b;">${esc(k)}</td><td style="padding:6px 0;font-weight:600;color:#0f172a;">${esc(v)}</td></tr>`).join('');
+  const html = layout('New administrator sign-in', 'A new sign-in to your administrator account.', `
+    <h1>New administrator sign-in</h1>
+    <p>Hello ${esc(name || 'there')},</p>
+    <p>Your ${esc(BRAND.name)} administrator account was signed in to. If this was you, no action is needed.</p>
+    <div class="panel"><table style="width:100%;border-collapse:collapse;">${rows}</table></div>
+    <div class="panel"><strong>Was this not you?</strong><br/>Change your password immediately and contact ${esc(supportEmail(env))}.</div>
+  `, env);
+  return { subject: 'New sign-in to your Fidus administrator account', html, text: 'A new sign-in to your administrator account was detected.' };
 }
 
 export function institutionalEnquiryEmail(env: EmailEnv, details: Record<string, string>) {
