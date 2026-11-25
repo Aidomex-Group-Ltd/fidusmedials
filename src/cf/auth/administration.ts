@@ -697,24 +697,48 @@ export async function adminInitiatePasswordReset(ctx: ExecutionContext, actor: A
     .bind(email)
     .first()) as any;
 
-  if (target) {
-    const delivery = await sendPasswordResetEmailForUser(target);
-    await adminAudit(ctx, actor, 'password_reset_initiated', {
-      target_type: 'user',
-      target_id: target.id,
-      target_email: target.email,
-      target_name: target.name,
-      reason: String(body?.reason || '').trim() || undefined,
-      ip,
-      user_agent: userAgent(ctx),
+  if (!target) {
+    // Keep the same generic response so callers cannot enumerate accounts,
+    // but record the attempt for traceability.
+    await audit(ctx, 'admin_password_reset_initiated', actor, undefined, 'user', { delivery_ok: false, reason: 'no_matching_account' }, ip);
+    return json(200, {
+      success: true,
+      message: 'If an account matches that email, a password reset link has been sent.',
     });
-    await audit(ctx, 'admin_password_reset_initiated', actor, target.id, 'user', { delivery_ok: delivery.ok }, ip);
   }
 
-  // Identical response whether or not the account exists.
+  const delivery = await sendPasswordResetEmailForUser(target);
+  await adminAudit(ctx, actor, 'password_reset_initiated', {
+    target_type: 'user',
+    target_id: target.id,
+    target_email: target.email,
+    target_name: target.name,
+    reason: String(body?.reason || '').trim() || undefined,
+    ip,
+    user_agent: userAgent(ctx),
+  });
+  await audit(ctx, 'admin_password_reset_initiated', actor, target.id, 'user', {
+    delivery_ok: delivery.ok,
+    skipped: delivery.skipped || false,
+    error: delivery.error || null,
+    message_id: delivery.id || null,
+  }, ip);
+
+  if (!delivery.ok) {
+    // Report the failure honestly instead of masquerading as a sent email.
+    return json(502, {
+      success: false,
+      message: delivery.skipped
+        ? 'No deliverable email address is on file for this account.'
+        : `Password reset email could not be delivered: ${delivery.error || 'unknown error'}`,
+      email_delivery: delivery,
+    });
+  }
+
   return json(200, {
     success: true,
-    message: 'If an account matches that email, a password reset link has been sent.',
+    message: `Password reset link sent to ${target.email}.`,
+    email_delivery: delivery,
   });
 }
 
